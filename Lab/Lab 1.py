@@ -1,3 +1,5 @@
+from functools import partial
+import matplotlib as mpl
 from matplotlib import pyplot as plt
 import numpy as np
 
@@ -33,34 +35,39 @@ def square(t):
     return np.mod(np.floor(t), 2) * 2 - 1
 
 def main():
+    # deterministic SVG
+    np.random.seed(42)
+    mpl.rcParams['svg.hashsalt'] = "42"
+    savefig = partial(plt.savefig, metadata = {'Date': None})
+
     functions = [cos_signal(520, np.pi / 3), cos_signal(280, -np.pi / 3), cos_signal(120, np.pi / 3)]
-    fig, axs = plt.subplots(len(functions))
+    _, axs = plt.subplots(len(functions))
     T = 0.03
     SAMPLING_FREQ = 200
     DRAWING_FREQ = 20000
     for ax, fn in zip(axs, functions):
         draw_sampled(ax, fn, T, SAMPLING_FREQ, DRAWING_FREQ)
-    fig.savefig("Lab 1 - Ex 1.svg")
+    savefig("Lab 1 - Ex 1.svg")
     plt.close()
 
-    fig, axs = plt.subplots(4)
+    _, axs = plt.subplots(4)
     draw_sampled(axs[0], sin_signal(400, 0), 1, 1600, DRAWING_FREQ, display_fraction=0.01)
     draw(axs[1], sin_signal(800, 0), 3, DRAWING_FREQ, display_fraction=0.01)
     draw(axs[2], signal(sawtooth, 240, 0), 0.05, DRAWING_FREQ)
     draw(axs[3], signal(square, 300, 0), 0.05, DRAWING_FREQ)
-    fig.savefig("Lab 1 - Ex 2 A-D.svg")
+    savefig("Lab 1 - Ex 2 A-D.svg")
     plt.close()
 
     rand = np.random.rand(128, 128)
     plt.imshow(rand)
-    plt.savefig("Lab 1 - Ex 2 E.svg")
+    savefig("Lab 1 - Ex 2 E.svg")
     plt.close()
 
     x = np.zeros((128, 128)) + np.arange(0, 128)
     y = np.zeros((128, 128)) + np.arange(0, 128)[:, np.newaxis]
     chess = np.sin(x) * np.cos(y)
     plt.imshow(chess)
-    plt.savefig("Lab 1 - Ex 2 F.svg")
+    savefig("Lab 1 - Ex 2 F.svg")
     plt.close()
 
     # ex 3
