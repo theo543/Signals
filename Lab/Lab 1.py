@@ -34,6 +34,18 @@ def sawtooth(t):
 def square(t):
     return np.mod(np.floor(t), 2) * 2 - 1
 
+def spiral(res):
+    half_res = res / 2
+    x = np.zeros((res, res)) + np.arange(0, res)
+    y = np.zeros((res, res)) + np.arange(0, res)[:, np.newaxis]
+    distance = np.sqrt((half_res - x) ** 2 + (half_res - y) ** 2) / (half_res * np.sqrt(2))
+    slowing_down_distance = - ((1 - distance) ** 2)  * (0.28 * distance - 0.2) / 0.2
+    expected_degrees = sawtooth(slowing_down_distance * 10) * np.pi
+    degrees = np.arctan2(y - half_res, x - half_res)
+    spilling_spiral = (np.abs(np.pi - np.abs(degrees - expected_degrees)) / np.pi) ** 3
+    spiral_ = spilling_spiral * np.minimum(1, 1.7 - distance) ** 10
+    return spiral_
+
 def main():
     # deterministic SVG
     np.random.seed(42)
@@ -63,11 +75,14 @@ def main():
     savefig("Lab 1 - Ex 2 E.svg")
     plt.close()
 
-    x = np.zeros((128, 128)) + np.arange(0, 128)
-    y = np.zeros((128, 128)) + np.arange(0, 128)[:, np.newaxis]
-    chess = np.sin(x) * np.cos(y)
-    plt.imshow(chess)
+    low_res_spiral = spiral(128)
+    plt.imshow(low_res_spiral)
     savefig("Lab 1 - Ex 2 F.svg")
+    plt.close()
+
+    high_res_spiral = spiral(1000)
+    plt.imshow(high_res_spiral)
+    savefig("Lab 1 - Ex 2 F (high-res).svg")
     plt.close()
 
     # ex 3
