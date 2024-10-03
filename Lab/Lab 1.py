@@ -29,7 +29,7 @@ def sin_signal(freq, phase):
     return signal(np.sin, freq, phase)
 
 def sawtooth(t):
-    return t - np.floor(t)
+    return (t - np.floor(t)) * 2 - 1
 
 def square(t):
     return np.mod(np.floor(t), 2) * 2 - 1
