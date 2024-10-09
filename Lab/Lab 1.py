@@ -40,10 +40,10 @@ def spiral(res):
     y = np.zeros((res, res)) + np.arange(0, res)[:, np.newaxis]
     distance = np.sqrt((half_res - x) ** 2 + (half_res - y) ** 2) / (half_res * np.sqrt(2))
     slowing_down_distance = - ((1 - distance) ** 2)  * (0.28 * distance - 0.2) / 0.2
-    expected_degrees = sawtooth(slowing_down_distance * 10) * np.pi
-    degrees = np.arctan2(y - half_res, x - half_res)
-    spilling_spiral = (np.abs(np.pi - np.abs(degrees - expected_degrees)) / np.pi) ** 3
-    spiral_ = spilling_spiral * np.minimum(1, 1.7 - distance) ** 10
+    expected_degrees = sawtooth(slowing_down_distance * 10)
+    degrees = np.arctan2(y - half_res, x - half_res) / np.pi
+    spilling_spiral = np.abs(1 - np.abs(degrees - expected_degrees))
+    spiral_ = spilling_spiral * np.minimum(1, 1.6 - distance) ** 10
     return spiral_
 
 def main():
