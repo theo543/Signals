@@ -1,7 +1,6 @@
-from functools import partial
-import matplotlib as mpl
 from matplotlib import pyplot as plt
 import numpy as np
+from det_svg import savefig
 
 def draw_sampled(ax, fn, t, sampling_freq, drawing_freq, display_fraction = 1.0):
     sampling_range = np.linspace(0, t, num=int(t*sampling_freq))
@@ -47,11 +46,6 @@ def spiral(res):
     return spiral_
 
 def main():
-    # deterministic SVG
-    np.random.seed(42)
-    mpl.rcParams['svg.hashsalt'] = "42"
-    savefig = partial(plt.savefig, metadata = {'Date': None})
-
     functions = [cos_signal(520, np.pi / 3), cos_signal(280, -np.pi / 3), cos_signal(120, np.pi / 3)]
     _, axs = plt.subplots(len(functions))
     T = 0.03

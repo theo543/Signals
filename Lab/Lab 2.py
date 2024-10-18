@@ -1,17 +1,11 @@
-from functools import partial
 import numpy as np
-import matplotlib as mpl
 from matplotlib import pyplot as plt
+from det_svg import savefig
 
 def square(t):
     return np.mod(np.floor(t), 2) * 2 - 1
 
 def main():
-    # deterministic SVG
-    np.random.seed(42)
-    mpl.rcParams['svg.hashsalt'] = "42"
-    savefig = partial(plt.savefig, metadata = {'Date': None})
-
     t = 0.1
     time = np.linspace(0, t, num=1_000_000)
     freq = 60
