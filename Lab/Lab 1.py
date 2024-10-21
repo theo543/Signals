@@ -1,6 +1,6 @@
 from matplotlib import pyplot as plt
 import numpy as np
-from det_svg import savefig
+from savefig import savefig
 
 def draw_sampled(ax, fn, t, sampling_freq, drawing_freq, display_fraction = 1.0):
     sampling_range = np.linspace(0, t, num=int(t*sampling_freq))
@@ -53,7 +53,7 @@ def main():
     DRAWING_FREQ = 20000
     for ax, fn in zip(axs, functions):
         draw_sampled(ax, fn, T, SAMPLING_FREQ, DRAWING_FREQ)
-    savefig("Lab 1 - Ex 1.svg")
+    savefig("Lab 1 - Ex 1")
     plt.close()
 
     _, axs = plt.subplots(4)
@@ -61,22 +61,22 @@ def main():
     draw(axs[1], sin_signal(800, 0), 3, DRAWING_FREQ, display_fraction=0.01)
     draw(axs[2], signal(sawtooth, 240, 0), 0.05, DRAWING_FREQ)
     draw(axs[3], signal(square, 300, 0), 0.05, DRAWING_FREQ)
-    savefig("Lab 1 - Ex 2 A-D.svg")
+    savefig("Lab 1 - Ex 2 A-D")
     plt.close()
 
     rand = np.random.rand(128, 128)
     plt.imshow(rand)
-    savefig("Lab 1 - Ex 2 E.svg")
+    savefig("Lab 1 - Ex 2 E")
     plt.close()
 
     low_res_spiral = spiral(128)
     plt.imshow(low_res_spiral)
-    savefig("Lab 1 - Ex 2 F.svg")
+    savefig("Lab 1 - Ex 2 F")
     plt.close()
 
     high_res_spiral = spiral(1000)
     plt.imshow(high_res_spiral)
-    savefig("Lab 1 - Ex 2 F (high-res).svg")
+    savefig("Lab 1 - Ex 2 F (high-res)")
     plt.close()
 
     # ex 3

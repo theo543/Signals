@@ -1,6 +1,6 @@
 import numpy as np
 from matplotlib import pyplot as plt
-from det_svg import savefig
+from savefig import savefig
 
 def square(t):
     return np.mod(np.floor(t), 2) * 2 - 1
@@ -18,7 +18,7 @@ def main():
     ax[1].plot(time, y)
     ax[2].plot(time, x)
     ax[2].plot(time, y)
-    savefig("Lab 2 - 1.svg")
+    savefig("Lab 2 - 1")
     plt.close()
 
     phases = np.array([0, 1, 2, 3]) * (np.pi ** 2) * freq
@@ -31,7 +31,7 @@ def main():
         y_vals.append(f"SNR = {snr}, γ = {y}")
         plt.plot(time, x + y * z)
     plt.legend(y_vals)
-    savefig("Lab 2 - 2.svg")
+    savefig("Lab 2 - 2")
     plt.close()
 
     x = np.sin(time * 2 * np.pi * freq)
@@ -40,7 +40,7 @@ def main():
     ax[0].plot(time, x)
     ax[1].plot(time, y)
     ax[2].plot(time, x + y)
-    savefig("Lab 2 - 4.svg")
+    savefig("Lab 2 - 4")
     plt.close()
 
     sampling_freq = 1000
@@ -52,7 +52,7 @@ def main():
         sig_sampled = np.sin(sample_times * 2 * np.pi * sampling_freq / ratio)
         ax[i].plot(time, sig)
         ax[i].stem(sample_times, sig_sampled)
-    savefig("Lab 2 - 6.svg")
+    savefig("Lab 2 - 6")
     plt.close()
     # Observations:
     # Signal 1 is always zero when it is sampled.
@@ -71,7 +71,7 @@ def main():
     ax[1].stem(sample_times[:sample_times.size//4], x_s[deci_idx])
     deci_idx = np.arange(2, x_s.size, 4)
     ax[2].stem(sample_times[:sample_times.size//4], x_s[deci_idx])
-    savefig("Lab 2 - 7.svg")
+    savefig("Lab 2 - 7")
     plt.close()
     # Observations:
     # Keeping every 4th sample multiplies the frequency by 4.
@@ -94,7 +94,7 @@ def main():
         ax[row][2].plot(a, sin)
         ax[row][2].plot(a, pade_approx)
         ax[row][3].plot(a, pade_err)
-    savefig("Lab 2 - 8.svg")
+    savefig("Lab 2 - 8")
     plt.close()
 
 if __name__ == "__main__":
