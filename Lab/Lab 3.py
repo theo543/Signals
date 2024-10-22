@@ -19,8 +19,8 @@ def main():
 
     N = 5_000
     n = np.linspace(0, 1, num=N)
-    signal = np.cos(n * 2 * np.pi * 15)
-    w_vals = [3, 5, 15, 40]
+    signal = np.sin(n * 2 * np.pi * 5) * 3 + np.cos(n * 2 * np.pi * 11 + 111) + np.sin(n * 2 * np.pi * 26 - 50) * 2
+    w_vals = [5, 11, 26, 30]
 
     fig, axs = plt.subplots(nrows=1, ncols=2)
     axs[0].set_xlabel("Time")
@@ -28,8 +28,10 @@ def main():
     axs[1].set_xlabel("Real")
     axs[1].set_ylabel("Imaginary")
     axs[0].set_xlim([0, 1])
-    axs[1].set_xlim([-1.1, 1.1])
-    axs[1].set_ylim([-1.1, 1.1])
+    lim = max(np.max(np.abs(signal.real)), np.max(np.abs(signal.imag))) * 1.1
+    lims = [-lim, lim]
+    axs[1].set_xlim(lims)
+    axs[1].set_ylim(lims)
     axs[0].axhline(color="black")
     axs[1].axhline(color="black")
     axs[1].axvline(color="black")
@@ -51,16 +53,18 @@ def main():
         ax.set_title(f"w = {w}")
         ax.set_xlabel("Real")
         ax.set_ylabel("Imaginary")
-        ax.set_xlim([-1.1, 1.1])
-        ax.set_ylim([-1.1, 1.1])
+        ax.set_xlim(lims)
+        ax.set_ylim(lims)
         ax.axhline(color="black")
         ax.axvline(color="black")
         ax.set(aspect="equal")
+    fig.suptitle("Signal contains 5 Hz, 11 Hz, and 26 Hz frequencies.")
     fig.tight_layout(pad=0, h_pad=0.5)
+    fig.subplots_adjust(top=0.85)
     for i, w in enumerate(w_vals):
         ax = axs[i // 2][i % 2]
         shape = signal * np.e ** (-2 * np.pi * 1j * w * n)
-        distance = (1 - (np.abs(shape[1:]) * 0.7 + 0.3))
+        distance = (1 - (np.abs(shape[1:] / lim) * 0.7 + 0.3))
         colors = plt.colormaps["ocean"](distance)
         coords = np.column_stack((shape.real, shape.imag))
         assert coords.shape == (N, 2)
