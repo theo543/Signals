@@ -70,6 +70,8 @@ def main():
         assert segments.size == colors.size
         col = LineCollection(segments=segments, colors=colors)
         ax.add_collection(col)
+        # plot center
+        ax.plot([coords[:, 0].mean(), 0], [coords[:, 1].mean(), 0], color="darkblue", marker="o", linestyle="solid", linewidth=2, markevery=2)
     savefig("Lab 3 - 2 Fig 2")
     plt.close()
 
