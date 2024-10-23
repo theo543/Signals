@@ -19,8 +19,8 @@ def main():
 
     N = 5_000
     n = np.linspace(0, 1, num=N)
-    signal = np.sin(n * 2 * np.pi * 5) * 3 + np.cos(n * 2 * np.pi * 11 + 111) + np.sin(n * 2 * np.pi * 26 - 50) * 2
-    w_vals = [5, 11, 26, 30]
+    signal = -1 + np.sin(2 * np.pi * n * 3 - 0.2) * 2 + np.sin(2 * np.pi * n * 5 + 3) * 1.5 + np.sin(2 * np.pi * n * 9 + 0.6) * 4
+    w_vals = [3, 5, 9, 0, 4, 6]
 
     fig, axs = plt.subplots(nrows=1, ncols=2)
     axs[0].set_xlabel("Time")
@@ -47,10 +47,10 @@ def main():
     savefig("Lab 3 - 2 Fig 1")
     plt.close()
 
-    fig, axs = plt.subplots(nrows=2, ncols=2)
+    fig, axs = plt.subplots(nrows=2, ncols=3)
     for i, w in enumerate(w_vals):
-        ax = axs[i // 2][i % 2]
-        ax.set_title(f"w = {w}")
+        ax = axs[i // 3][i % 3]
+        ax.set_title(f"ω = {w}")
         ax.set_xlabel("Real")
         ax.set_ylabel("Imaginary")
         ax.set_xlim(lims)
@@ -58,11 +58,11 @@ def main():
         ax.axhline(color="black")
         ax.axvline(color="black")
         ax.set(aspect="equal")
-    fig.suptitle("Signal contains 5 Hz, 11 Hz, and 26 Hz frequencies.")
-    fig.tight_layout(pad=0, h_pad=0.5)
-    fig.subplots_adjust(top=0.85)
+    fig.suptitle("Signal contains 3 Hz, 5 Hz, and 9 Hz frequencies, with -1 DC bias.")
+    fig.tight_layout(pad=0, h_pad=3.5)
+    fig.subplots_adjust(top=0.87, bottom=0.1)
     for i, w in enumerate(w_vals):
-        ax = axs[i // 2][i % 2]
+        ax = axs[i // 3][i % 3]
         shape = signal * np.e ** (-2 * np.pi * 1j * w * n)
         distance = (1 - (np.abs(shape[1:] / lim) * 0.7 + 0.3))
         colors = plt.colormaps["ocean"](distance)
@@ -92,7 +92,6 @@ def main():
     F = (1 / N) * w ** (row * col)
     F_inv = F.conj().T * N
     assert np.allclose(F @ F_inv, np.identity(N))
-    signal = -5 + np.sin(2 * np.pi * n * 3 - 0.2) * 3 + np.sin(2 * np.pi * n * 5 + 3) * 0.3 + np.sin(2 * np.pi * n * 9 + 0.6) * 9
     freq = signal @ F
     assert np.allclose(signal, freq @ F_inv)
     # almost all bins in the DFT are 0 since the signal is low frequency, so display only up to 10 Hz
