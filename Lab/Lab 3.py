@@ -3,6 +3,40 @@ from matplotlib import pyplot as plt
 from matplotlib.collections import LineCollection
 from savefig import savefig
 
+def draw_winding_plot(w_freq, signal, n, ax, colormap=plt.colormaps["ocean"], plot_center=True, stem_idx=None):
+    ax.set_xlabel("Real")
+    ax.set_ylabel("Imaginary")
+    lim = np.max(np.abs(signal)) * 1.1
+    ax.set_xlim([-lim, lim])
+    ax.set_ylim([-lim, lim])
+    ax.axhline(color="black")
+    ax.axvline(color="black")
+    ax.set(aspect="equal")
+
+    shape = signal * np.e ** (-2 * np.pi * 1j * w_freq * n)
+
+    if colormap is not None:
+        distance = (1 - (np.abs(shape[1:] / lim) * 0.7 + 0.3))
+        colors = colormap(distance)
+
+        coords = np.column_stack((shape.real, shape.imag))
+        assert coords.shape == (n.size, 2)
+        size = coords.itemsize
+        assert coords.strides == (size * 2, size)
+        segments = np.lib.stride_tricks.as_strided(coords, (n.size - 1, 2, 2), (size * 2, size * 2, size), writeable=False)
+
+        col = LineCollection(segments=segments, colors=colors)
+        ax.add_collection(col)
+    else:
+        ax.plot(shape.real, shape.imag)
+
+    if plot_center:
+        center = np.mean(shape)
+        ax.plot([center.real, 0], [center.imag.mean(), 0], color="darkblue", marker="o", linestyle="solid", linewidth=2, markevery=2)
+
+    if stem_idx is not None:
+        ax.plot([shape.real[stem_idx], 0], [shape.imag[stem_idx], 0], "r-o", markevery=2)
+
 def main():
     N = 8
     row = np.arange(0, N)
@@ -25,24 +59,13 @@ def main():
     fig, axs = plt.subplots(nrows=1, ncols=2)
     axs[0].set_xlabel("Time")
     axs[0].set_ylabel("Amplitude")
-    axs[1].set_xlabel("Real")
-    axs[1].set_ylabel("Imaginary")
     axs[0].set_xlim([0, 1])
-    lim = max(np.max(np.abs(signal.real)), np.max(np.abs(signal.imag))) * 1.1
-    lims = [-lim, lim]
-    axs[1].set_xlim(lims)
-    axs[1].set_ylim(lims)
     axs[0].axhline(color="black")
-    axs[1].axhline(color="black")
-    axs[1].axvline(color="black")
-    axs[1].set(aspect="equal")
+    stem_idx = int(N * 0.21)
+    draw_winding_plot(1, signal, n, axs[1], plot_center=False, colormap=None, stem_idx=stem_idx)
     fig.tight_layout()
     axs[0].plot(n, signal, color="green")
-    shape = signal * np.e ** (-2 * np.pi * 1j * n)
-    axs[1].plot(shape.real, shape.imag)
-    stem_idx = int(N * 0.21)
     axs[0].plot([n[stem_idx]] * 2, [signal[stem_idx], 0], "r-o", markevery=2)
-    axs[1].plot([shape.real[stem_idx], 0], [shape.imag[stem_idx], 0], "r-o", markevery=2)
     fig.subplots_adjust(left=0.12)
     savefig("Lab 3 - 2 Fig 1")
     plt.close()
@@ -51,31 +74,10 @@ def main():
     for i, w in enumerate(w_vals):
         ax = axs[i // 3][i % 3]
         ax.set_title(f"ω = {w}")
-        ax.set_xlabel("Real")
-        ax.set_ylabel("Imaginary")
-        ax.set_xlim(lims)
-        ax.set_ylim(lims)
-        ax.axhline(color="black")
-        ax.axvline(color="black")
-        ax.set(aspect="equal")
+        draw_winding_plot(w, signal, n, ax)
     fig.suptitle("Signal contains 3 Hz, 5 Hz, and 9 Hz frequencies, with -1 DC bias.")
     fig.tight_layout(pad=0, h_pad=3.5)
     fig.subplots_adjust(top=0.87, bottom=0.1)
-    for i, w in enumerate(w_vals):
-        ax = axs[i // 3][i % 3]
-        shape = signal * np.e ** (-2 * np.pi * 1j * w * n)
-        distance = (1 - (np.abs(shape[1:] / lim) * 0.7 + 0.3))
-        colors = plt.colormaps["ocean"](distance)
-        coords = np.column_stack((shape.real, shape.imag))
-        assert coords.shape == (N, 2)
-        size = coords.itemsize
-        assert coords.strides == (size * 2, size)
-        segments = np.lib.stride_tricks.as_strided(coords, (N - 1, 2, 2), (size * 2, size * 2, size), writeable=False)
-        assert segments.size == colors.size
-        col = LineCollection(segments=segments, colors=colors)
-        ax.add_collection(col)
-        # plot center
-        ax.plot([coords[:, 0].mean(), 0], [coords[:, 1].mean(), 0], color="darkblue", marker="o", linestyle="solid", linewidth=2, markevery=2)
     savefig("Lab 3 - 2 Fig 2")
     plt.close()
 
