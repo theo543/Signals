@@ -82,6 +82,7 @@ def main():
     fig, axs = plt.subplots(nrows=1, ncols=2)
     axs[0].set_xlabel("Time")
     axs[0].set_ylabel("Amplitude")
+    axs[0].axhline(color="black")
     axs[1].set_xlabel("Frequency")
     axs[1].set_ylabel("Amplitude")
     fig.tight_layout()
