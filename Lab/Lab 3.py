@@ -32,7 +32,7 @@ def draw_winding_plot(w_freq, signal, n, ax, colormap=plt.colormaps["ocean"], pl
 
     if plot_center:
         center = np.mean(shape)
-        ax.plot([center.real, 0], [center.imag.mean(), 0], color="darkblue", marker="o", linestyle="solid", linewidth=2, markevery=2)
+        ax.plot([center.real, 0], [center.imag.mean(), 0], color="darkblue", marker="o", linestyle="solid", linewidth=3, markevery=2, solid_capstyle="round")
 
     if stem_idx is not None:
         ax.plot([shape.real[stem_idx], 0], [shape.imag[stem_idx], 0], "r-o", markevery=2)
