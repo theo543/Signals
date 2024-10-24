@@ -54,6 +54,7 @@ def main():
     N = 5_000
     n = np.linspace(0, 1, num=N)
     signal = -1 + np.sin(2 * np.pi * n * 3 - 0.2) * 2 + np.sin(2 * np.pi * n * 5 + 3) * 1.5 + np.sin(2 * np.pi * n * 9 + 0.6) * 4
+    signal_formula = r"$y = -1 + 2\sin(2\pi x \cdot 3 - 0.2) + 1.5\sin(2\pi x \cdot 5 + 3) + 4\sin(2\pi x \cdot 9 + 0.6)$"
     w_vals = [3, 5, 9, 0, 4, 6]
 
     fig, axs = plt.subplots(nrows=1, ncols=2)
@@ -73,9 +74,9 @@ def main():
     fig, axs = plt.subplots(nrows=2, ncols=3)
     for i, w in enumerate(w_vals):
         ax = axs[i // 3][i % 3]
-        ax.set_title(f"ω = {w}")
+        ax.set_title(f"$\\omega = {w}$")
         draw_winding_plot(w, signal, n, ax)
-    fig.suptitle("Signal contains 3 Hz, 5 Hz, and 9 Hz frequencies, with -1 DC bias.")
+    fig.suptitle(signal_formula)
     fig.tight_layout(pad=0, h_pad=3.5)
     fig.subplots_adjust(top=0.87, bottom=0.1)
     savefig("Lab 3 - 2 Fig 2")
