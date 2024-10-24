@@ -1,6 +1,9 @@
+from pathlib import Path
+from sys import argv
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.collections import LineCollection
+from matplotlib.animation import FuncAnimation
 from savefig import savefig
 
 def draw_winding_plot(w_freq, signal, n, ax, colormap=plt.colormaps["ocean"], plot_center=True, stem_idx=None):
@@ -82,6 +85,38 @@ def main():
     savefig("Lab 3 - 2 Fig 2")
     plt.close()
 
+    max_freq = 11
+
+    mp4_file =  Path("images/Lab 3 - 2.mp4")
+    if (not mp4_file.exists()) or "--regenerate-mp4" in argv:
+        fps = 144
+        fig, ax = plt.subplots()
+        frames = []
+        pause = [None] * (fps // 4)
+        linear = np.linspace(0, 1, num=int(fps * 1.5))
+        ease_in_out = linear * linear * (3 - 2 * linear)
+        for f in range(max_freq, 0, -1):
+            w_vals = f - ease_in_out
+            percent_done = 1 - (f - linear) / max_freq
+            frames.extend(zip(w_vals, percent_done))
+            frames.extend(pause)
+        def render(args):
+            if args is None:
+                return []
+            (w, percent) = args
+            print(f"Rendering: {percent*100:.2f}%", end="\r")
+            ax.clear()
+            txt = ax.set_title(f"{signal_formula}\n$\\omega = {w:.2f}$")
+            draw_winding_plot(w, signal, n, ax)
+            return [txt] + ax.lines
+        ani = FuncAnimation(fig, render, frames=frames, blit=True)
+        mp4_file.unlink(missing_ok=True)
+        ani.save(mp4_file, dpi=200, fps=fps)
+        plt.close()
+        print(f"\nSaved to {mp4_file.resolve()}.")
+    else:
+        print(f"{mp4_file.resolve()} already exists")
+
     fig, axs = plt.subplots(nrows=1, ncols=2)
     axs[0].set_xlabel("Time")
     axs[0].set_ylabel("Amplitude")
@@ -97,8 +132,6 @@ def main():
     assert np.allclose(F @ F_inv, np.identity(N))
     freq = signal @ F
     assert np.allclose(signal, freq @ F_inv)
-    # almost all bins in the DFT are 0 since the signal is low frequency, so display only up to 10 Hz
-    max_freq = 11
     amplitudes = np.abs(freq[:max_freq])
     amplitudes[1:] *= 2
     axs[0].plot(n, signal)
