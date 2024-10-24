@@ -1,5 +1,6 @@
 from pathlib import Path
 from sys import argv
+from time import time
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.collections import LineCollection
@@ -39,6 +40,38 @@ def draw_winding_plot(w_freq, signal, n, ax, colormap=plt.colormaps["ocean"], pl
 
     if stem_idx is not None:
         ax.plot([shape.real[stem_idx], 0], [shape.imag[stem_idx], 0], "r-o", markevery=2)
+
+def render_animated_winding_plot(n, signal, signal_formula, max_freq, mp4_file, flag_name, winding_plot_kwargs, fps=144, dpi=200):
+    if (not mp4_file.exists()) or flag_name in argv:
+        start_time = time()
+        print(f"Generating animated plot at '{mp4_file.resolve()}'")
+        fig, ax = plt.subplots()
+        frames = []
+        pause = [None] * (fps // 4)
+        linear = np.linspace(0, 1, num=int(fps * 1.5))
+        ease_in_out = linear * linear * (3 - 2 * linear)
+        for f in range(max_freq, 0, -1):
+            w_vals = f - ease_in_out
+            percent_done = 1 - (f - linear) / max_freq
+            frames.extend(zip(w_vals, percent_done))
+            frames.extend(pause)
+        def render(args):
+            if args is None:
+                return []
+            (w, percent) = args
+            print(f"Rendering: {percent*100:.2f}%", end="\r")
+            ax.clear()
+            txt = ax.set_title(f"{signal_formula}\n$\\omega = {w:.2f}$")
+            draw_winding_plot(w, signal, n, ax, **winding_plot_kwargs)
+            return [txt] + ax.lines
+        ani = FuncAnimation(fig, render, frames=frames, blit=True)
+        mp4_file.unlink(missing_ok=True)
+        ani.save(mp4_file, dpi=dpi, fps=fps)
+        plt.close()
+        duration = time() - start_time
+        print(f"Rendering took {int(duration // 60)} minutes and {duration % 60:.2f} seconds.")
+    else:
+        print(f"{mp4_file.resolve()} already exists. Use '{flag_name}' flag to regenerate it.")
 
 def main():
     N = 8
@@ -87,35 +120,12 @@ def main():
 
     max_freq = 11
 
-    mp4_file =  Path("images/Lab 3 - 2.mp4")
-    if (not mp4_file.exists()) or "--regenerate-mp4" in argv:
-        fps = 144
-        fig, ax = plt.subplots()
-        frames = []
-        pause = [None] * (fps // 4)
-        linear = np.linspace(0, 1, num=int(fps * 1.5))
-        ease_in_out = linear * linear * (3 - 2 * linear)
-        for f in range(max_freq, 0, -1):
-            w_vals = f - ease_in_out
-            percent_done = 1 - (f - linear) / max_freq
-            frames.extend(zip(w_vals, percent_done))
-            frames.extend(pause)
-        def render(args):
-            if args is None:
-                return []
-            (w, percent) = args
-            print(f"Rendering: {percent*100:.2f}%", end="\r")
-            ax.clear()
-            txt = ax.set_title(f"{signal_formula}\n$\\omega = {w:.2f}$")
-            draw_winding_plot(w, signal, n, ax)
-            return [txt] + ax.lines
-        ani = FuncAnimation(fig, render, frames=frames, blit=True)
-        mp4_file.unlink(missing_ok=True)
-        ani.save(mp4_file, dpi=200, fps=fps)
-        plt.close()
-        print(f"\nSaved to {mp4_file.resolve()}.")
-    else:
-        print(f"{mp4_file.resolve()} already exists")
+    animated_plots = [
+        (Path("images/Lab 3 - 2 Animated Winding Plot.mp4"), "--regenerate-mp4", {}),
+        (Path("images/Lab 3 - 2 Animated Winding Plot (no colormap).mp4"), "--regenerate-mp4-no-cmap", {'colormap': None})
+    ]
+    for mp4_file, flag_name, winding_plot_kwargs in animated_plots:
+        render_animated_winding_plot(n, signal, signal_formula, max_freq, mp4_file, flag_name, winding_plot_kwargs)
 
     fig, axs = plt.subplots(nrows=1, ncols=2)
     axs[0].set_xlabel("Time")
