@@ -16,14 +16,14 @@ def draw_winding_plot(w_freq, signal, n, ax, colormap=plt.colormaps["ocean"], pl
     shape = signal * np.e ** (-2 * np.pi * 1j * w_freq * n)
 
     if colormap is not None:
-        distance = (1 - (np.abs(shape[1:] / lim) * 0.7 + 0.3))
+        distance = (1 - (np.abs(shape[2:] / lim) * 0.7 + 0.3))
         colors = colormap(distance)
 
         coords = np.column_stack((shape.real, shape.imag))
         assert coords.shape == (n.size, 2)
         size = coords.itemsize
         assert coords.strides == (size * 2, size)
-        segments = np.lib.stride_tricks.as_strided(coords, (n.size - 1, 2, 2), (size * 2, size * 2, size), writeable=False)
+        segments = np.lib.stride_tricks.as_strided(coords, (n.size - 2, 2, 2), (size * 2, size * 4, size), writeable=False)
 
         col = LineCollection(segments=segments, colors=colors)
         ax.add_collection(col)
