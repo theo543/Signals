@@ -48,7 +48,7 @@ def main():
     plt.legend(["DFT", "FFT"])
     plt.xscale("log")
     plt.yscale("log")
-    plt.title(f"DFT vs FFT Benchmark\n{dft_times.shape[0]} repeats per test")
+    plt.title(f"DFT vs FFT Benchmark\n{dft_times.shape[1]} repeats per test")
     savefig("Lab 4 - 1")
     plt.close()
 
