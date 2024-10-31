@@ -11,7 +11,7 @@ from matplotlib import pyplot as plt
 np.random.seed(42)
 mpl.rcParams['svg.hashsalt'] = "42"
 
-def savefig(name, **kwargs):
+def savefig(name, svg=True, png=True, **kwargs):
     """
     Wrapper around pyplot's savefig.
     Saves figure as 600 DPI PNG and as SVG, with `metadata` argument set to `{'Date': None}`.
@@ -19,5 +19,7 @@ def savefig(name, **kwargs):
     """
     kwargs['metadata'] = {'Date': None}
     Path("images").mkdir(exist_ok=True)
-    plt.savefig(f"images/{name}.png", dpi=600, **kwargs)
-    plt.savefig(f"images/{name}.svg", **kwargs)
+    if png:
+        plt.savefig(f"images/{name}.png", dpi=600, **kwargs)
+    if svg:
+        plt.savefig(f"images/{name}.svg", **kwargs)
