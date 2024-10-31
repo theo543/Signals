@@ -19,7 +19,7 @@ def dft(signal):
     return signal @ F
 
 def main():
-    benchmark_data = Path("Lab 4 - benchmark data.npz")
+    benchmark_data = Path("Lab 4 benchmark data.npz")
     test_sizes = [4, 128, 256, 512, 1024, 2048, 4096, 8192]
     if (not benchmark_data.exists()) or "--run-benchmark" in argv:
         repeats_per_test = 20
