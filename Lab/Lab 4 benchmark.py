@@ -1,6 +1,6 @@
 from time import perf_counter
 from pathlib import Path
-from sys import argv
+from sys import argv, stdout
 import numpy as np
 from matplotlib import pyplot as plt
 from savefig import savefig
@@ -23,11 +23,14 @@ def main():
     test_sizes = [4, 128, 256, 512, 1024, 2048, 4096, 8192]
     if (not benchmark_data.exists()) or "--run-benchmark" in argv:
         repeats_per_test = 20
+        if len(argv) == 3 and argv[1] == "--run-benchmark":
+            repeats_per_test = int(argv[2])
         dft_times = np.zeros(shape=(len(test_sizes), repeats_per_test))
         fft_times = dft_times.copy()
         for size_idx, size in enumerate(test_sizes):
             for repeat in range(repeats_per_test):
-                print(f"Running repeat {repeat:02d} of size {size}.", end="\r")
+                end = "\r" if stdout.isatty() else "\n"
+                print(f"Running repeat {repeat:02d} of size {size}.", end=end, flush=True)
                 signal = np.random.random(size=size)
                 dft_result, dft_duration = time_function(dft, signal)
                 fft_result, fft_duration = time_function(np.fft.fft, signal)
@@ -35,7 +38,7 @@ def main():
                 dft_times[size_idx][repeat] = dft_duration
                 fft_times[size_idx][repeat] = fft_duration
         np.savez(benchmark_data, dft=dft_times, fft=fft_times)
-        print("\nDone running benchmarks.")
+        print("\nDone running benchmarks.", flush=True)
     benchmark_data = np.load(benchmark_data)
     dft_times = benchmark_data['dft']
     fft_times = benchmark_data['fft']
