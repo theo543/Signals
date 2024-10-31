@@ -3,10 +3,10 @@ Module for creating deterministic PNG and SVG files.
 On import, sets numpy random seed and matplotlib SVG hash salt to 42.
 """
 
+from pathlib import Path
 import numpy as np
 import matplotlib as mpl
 from matplotlib import pyplot as plt
-from pathlib import Path
 
 np.random.seed(42)
 mpl.rcParams['svg.hashsalt'] = "42"
