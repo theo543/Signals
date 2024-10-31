@@ -41,7 +41,9 @@ def generate_spectrogram(file: Path):
 #    plt.show()
 #    print(sampling_rate, sound.size, sound.size // 100)
     window_size = sound.size // 100
-    assert sound.shape == (sound.size,)
+    if not sound.shape == (sound.size,):
+        assert sound.shape == (sound.size // 2, 2)
+        sound = sound[:, 0]
     size = sound.itemsize
     windows = np.lib.stride_tricks.as_strided(sound, shape=(sound.size // window_size * 2 - 1, window_size), strides=(window_size // 2 * size, size), writeable=False)
     ffts = np.zeros(shape=(windows.shape[0], windows.shape[1] // 2))
@@ -57,6 +59,7 @@ def generate_spectrogram(file: Path):
     plt.xticks(ticks[:-1], ["0"] + [f"{min(seconds, (tick / right) * seconds):1.1f}" for tick in ticks[1:-1]])
     plt.tight_layout()
     savefig(file.with_suffix(""))
+    plt.close()
 
 def main():
     if not TEST_FILE.exists():
