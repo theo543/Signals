@@ -11,10 +11,6 @@ from savefig import savefig
 # they cause an error in VSCode and take extremely long to load in the browser
 savefig = partial(savefig, svg=False)
 
-def square(time):
-    _, whole = np.modf(time)
-    return whole % 2
-
 def triangle(time):
     fractional, _ = np.modf(time + 0.5)
     return np.abs(1 - fractional * 2)
@@ -35,17 +31,28 @@ def generate_test_signal():
     signal = np.sin(2 * np.pi * warped_time) * amplitude + rng.random(size=time.shape) * (amplitude / 30)
     wavfile.write(TEST_FILE, rate=sample_rate, data=signal.astype(np.int16))
 
+def windowed_view(array: np.ndarray, window_size: int, window_stride: int) -> np.ndarray:
+    assert array.shape == (array.size,)
+    assert len(array.strides) == 1
+    # offset not guaranteed to equal array.itemsize
+    # for the vowels recording, the two channels are interleaved
+    offset = array.strides[0]
+    total_windows = (array.size - window_size + 1) // window_stride
+    shape = (total_windows, window_size)
+    strides = (window_stride * offset, offset)
+    return np.lib.stride_tricks.as_strided(array, shape=shape, strides=strides, writeable=False)
+
 def generate_spectrogram(file: Path):
     sampling_rate, sound = wavfile.read(file)
-#    plt.specgram(sound, Fs=sampling_rate)
-#    plt.show()
-#    print(sampling_rate, sound.size, sound.size // 100)
-    window_size = sound.size // 100
-    if not sound.shape == (sound.size,):
-        assert sound.shape == (sound.size // 2, 2)
+
+    if sound.shape == (sound.size // 2, 2):
         sound = sound[:, 0]
-    size = sound.itemsize
-    windows = np.lib.stride_tricks.as_strided(sound, shape=(sound.size // window_size * 2 - 1, window_size), strides=(window_size // 2 * size, size), writeable=False)
+    else:
+        assert sound.shape == (sound.size,)
+
+    window_size = sound.size // 100
+    window_stride = window_size // 2
+    windows = windowed_view(sound, window_size, window_stride)
     ffts = np.zeros(shape=(windows.shape[0], windows.shape[1] // 2))
     for i, window in enumerate(windows):
         fft = np.fft.fft(window)
