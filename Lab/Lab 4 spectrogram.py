@@ -58,12 +58,21 @@ def generate_spectrogram(file: Path):
         fft = np.fft.fft(window)
         ffts[i, :] = 10 * np.log10(np.abs(fft[: window.size // 2]))
     plt.pcolormesh(ffts.T)
-    #plt.xticks([0, 1, 3, 4, 5, 7, 8])
-    ticks, _labels = plt.xticks()
-    seconds = sound.size // sampling_rate
+
+    def set_ticks(fn, max_position, max_value, value_step, suffix):
+        values = range(0, max_value, value_step)
+        ticks = [(max_position * value) // max_value for value in values]
+        labels = [str(value) + suffix for value in values]
+        fn(ticks, labels)
+
     left, right = plt.xlim()
+    bottom, top = plt.ylim()
+    assert bottom == 0
     assert left == 0
-    plt.xticks(ticks[:-1], ["0"] + [f"{min(seconds, (tick / right) * seconds):1.1f}" for tick in ticks[1:-1]])
+    max_freq = sampling_rate // 2
+    duration = sound.size // sampling_rate
+    set_ticks(plt.xticks, right, duration, 1, " sec")
+    set_ticks(plt.yticks, top, max_freq, 2000, " Hz")
     plt.tight_layout()
     savefig(file.with_suffix(""))
     plt.close()
