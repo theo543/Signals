@@ -50,11 +50,13 @@ def generate_spectrogram(file: Path):
     else:
         assert sound.shape == (sound.size,)
 
-    window_size = sound.size // 100
+    window_size = 2048
     window_stride = window_size // 2
     windows = windowed_view(sound, window_size, window_stride)
     ffts = np.zeros(shape=(windows.shape[0], windows.shape[1] // 2))
+    hanning_window_filter = np.sin(np.linspace(0, np.pi, num=window_size)) ** 2
     for i, window in enumerate(windows):
+        window = window * hanning_window_filter
         fft = np.fft.fft(window)
         ffts[i, :] = 10 * np.log10(np.abs(fft[: window.size // 2]))
     plt.pcolormesh(ffts.T)
