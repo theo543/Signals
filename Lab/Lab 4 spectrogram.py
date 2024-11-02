@@ -57,8 +57,9 @@ def generate_spectrogram(file: Path):
     hanning_window_filter = np.sin(np.linspace(0, np.pi, num=window_size)) ** 2
     for i, window in enumerate(windows):
         window = window * hanning_window_filter
-        fft = np.fft.fft(window)
-        ffts[i, :] = 10 * np.log10(np.abs(fft[: window.size // 2]))
+        magnitudes = np.abs(np.fft.fft(window)[:window.size // 2])
+        np.log10(magnitudes, where=magnitudes != 0, out=ffts[i])
+        ffts[i] *= 10
     plt.pcolormesh(ffts.T)
 
     def set_ticks(fn, max_position, max_value, value_step, suffix):
