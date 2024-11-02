@@ -73,8 +73,9 @@ def generate_spectrogram(file: Path):
     assert left == 0
     max_freq = sampling_rate // 2
     duration = sound.size // sampling_rate
-    set_ticks(plt.xticks, right, duration, 1, " sec")
+    set_ticks(plt.xticks, right, duration, 2, " sec")
     set_ticks(plt.yticks, top, max_freq, 2000, " Hz")
+    plt.colorbar(pad=0.01, format="{x:.0f} dB")
     plt.tight_layout()
     savefig(file.with_suffix(""))
     plt.close()
