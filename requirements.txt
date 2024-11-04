@@ -10,6 +10,7 @@ pillow==10.3.0
 pycparser==2.22
 pyparsing==3.1.2
 python-dateutil==2.9.0.post0
+replace_me==0.1.4
 scipy==1.14.1
 six==1.16.0
 sounddevice==0.5.1
