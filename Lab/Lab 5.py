@@ -1,3 +1,5 @@
+from pathlib import Path
+from datetime import datetime
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.ticker import FuncFormatter
@@ -14,12 +16,29 @@ from savefig import savefig
 # (c)
 # The maximum possible frequency is once per two hours = 1/7200 Hz = 138.9 uHz
 
-def main():
-    data = np.genfromtxt("Lab 5 Data.csv", delimiter=",", skip_header=1, usecols=(2,))#[888:1631]
+def filter_freq(data: np.ndarray, div: int):
+    max_idx = data.size // div
+    fft = np.fft.fft(data)
+    fft[max_idx+1:-max_idx] = 0
+    assert np.allclose(fft[1:], np.flip(fft[1:]).conj())
+    filtered = np.fft.ifft(fft).real
+    return filtered
 
-    plt.plot(data)
-    savefig("Lab 5 - signal")
-    plt.close()
+DATA = Path("Lab 5 Data.csv")
+
+def format_date(expected_idx: int, line: str):
+    [idx, date, _value] = line.split(",")
+    assert expected_idx == int(idx)
+    date_with_weekday = datetime.strptime(date, r"%d-%m-%Y %H:%M").strftime(r"%d-%m-%Y %H:%M %A")
+    return f"Sample {idx} was on {date_with_weekday}."
+
+# Sample rate is 24 times per day, so once a day is sample rate / 24.
+# Filter frequencies higher than once per day.
+# They are likely caused by either short-term traffic patterns or noise, so are irrelevant to long-term prediction.
+FILTER_DAY = 24
+
+def main():
+    data = np.genfromtxt(DATA, delimiter=",", skip_header=1, usecols=(2,))
 
     mean = np.mean(data)
     data -= mean
@@ -59,11 +78,27 @@ def main():
     # Frequency 1 might be caused by the slow increase of the signal.
     # Frequencies 2 and 4 might be from the year cycle (perhaps in some seasons there are more cars), or also due to the increase, or both.
 
-    # Filter frequencies higher than once per day
-    max_idx = data.size // 24 + 1
-    fft[max_idx:-max_idx] = 0
-    filtered_data = np.fft.ifft(fft).real
-    plt.plot(filtered_data)
+    month_start = 5256
+    month_end = 5975
+
+    # Making sure the month starts on a Monday.
+    dates = DATA.read_text(encoding="ascii").splitlines()
+    dates = [format_date(idx, dates[idx + 1]) for idx in [month_start, month_end, month_end + 1]]
+    insert_comment("\n".join(dates))
+    # Sample 5256 was on 01-04-2013 00:00 Monday.
+    # Sample 5975 was on 30-04-2013 23:00 Tuesday.
+    # Sample 5976 was on 01-05-2013 00:00 Wednesday.
+
+    month = data[month_start:month_end + 1]
+    plt.plot(month)
+    plt.plot(filter_freq(month, FILTER_DAY))
+    days_formatter = FuncFormatter(lambda x, _: f"day {x / 24 + 1:.0f}")
+    plt.gca().xaxis.set_major_formatter(days_formatter)
+    plt.legend(["Month", "Filtered Month"])
+    savefig("Lab 5 - month")
+    plt.close()
+
+    plt.plot(filter_freq(data, FILTER_DAY))
     savefig("Lab 5 - filtered")
 
 if __name__ == "__main__":
