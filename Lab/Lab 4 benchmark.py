@@ -19,15 +19,18 @@ def dft(signal):
     return signal @ F
 
 def main():
-    benchmark_data = Path("Lab 4 benchmark data.npz")
-    test_sizes = [4, 128, 256, 512, 1024, 2048, 4096, 8192]
-    if (not benchmark_data.exists()) or "--run-benchmark" in argv:
-        repeats_per_test = 20
+    for benchmark in [(Path("Lab 4 benchmark data.npz"), 20), (Path("Lab 4 benchmark data (10000).npz"), 10000)]:
+        process_benchmark(*benchmark)
+
+TEST_SIZES = [4, 128, 256, 512, 1024, 2048, 4096, 8192]
+
+def process_benchmark(benchmark_file: Path, repeats_per_test: int):
+    if (not benchmark_file.exists()) or "--run-benchmark" in argv:
         if len(argv) == 3 and argv[1] == "--run-benchmark":
             repeats_per_test = int(argv[2])
-        dft_times = np.zeros(shape=(len(test_sizes), repeats_per_test))
+        dft_times = np.zeros(shape=(len(TEST_SIZES), repeats_per_test))
         fft_times = dft_times.copy()
-        for size_idx, size in enumerate(test_sizes):
+        for size_idx, size in enumerate(TEST_SIZES):
             for repeat in range(repeats_per_test):
                 end = "\r" if stdout.isatty() else "\n"
                 print(f"Running repeat {repeat:02d} of size {size}.", end=end, flush=True)
@@ -37,22 +40,20 @@ def main():
                 assert np.allclose(dft_result, fft_result)
                 dft_times[size_idx][repeat] = dft_duration
                 fft_times[size_idx][repeat] = fft_duration
-        np.savez(benchmark_data, dft=dft_times, fft=fft_times)
+        np.savez(benchmark_file, dft=dft_times, fft=fft_times)
         print("\nDone running benchmarks.", flush=True)
-    benchmark_data = np.load(benchmark_data)
-    dft_times = benchmark_data['dft']
-    fft_times = benchmark_data['fft']
+    benchmark_data = np.load(benchmark_file)
     def plot_with_error(times):
         mean = np.mean(times, axis=1)
         std = np.std(times, axis=1)
-        plt.errorbar(test_sizes, mean, yerr=std)
-    plot_with_error(dft_times)
-    plot_with_error(fft_times)
+        plt.errorbar(TEST_SIZES, mean, yerr=std)
+    plot_with_error(benchmark_data['dft'])
+    plot_with_error(benchmark_data['fft'])
     plt.legend(["DFT", "FFT"])
     plt.xscale("log")
     plt.yscale("log")
-    plt.title(f"DFT vs FFT Benchmark\n{dft_times.shape[1]} repeats per test")
-    savefig("Lab 4 - 1")
+    plt.title(f"DFT vs FFT Benchmark\n{repeats_per_test} repeats per test")
+    savefig(f"Lab 4 - 1 ({repeats_per_test} repeats)")
     plt.close()
 
 if __name__ == "__main__":
