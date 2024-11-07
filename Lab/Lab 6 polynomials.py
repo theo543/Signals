@@ -28,13 +28,7 @@ def fft_poly_mul(p, q):
     q = np.pad(q, (0, q.size - 1))
     return np.fft.ifft(np.fft.fft(p) * np.fft.fft(q)).real
 
-def rectangle(n):
-    return np.abs(np.arange(n) - n / 2) < n / 4
-
-def hanning(n):
-    return (1 - np.cos(np.linspace(0, 2 * np.pi, num=n))) / 2
-
-POLY_FILE = Path("Lab 6 polynomial benchmark.npz")
+POLY_FILE = Path("Lab 6 polynomials.npz")
 
 def poly_benchmark():
     slow = []
@@ -52,15 +46,6 @@ def poly_benchmark():
     np.savez(POLY_FILE, sizes=np.array(sizes), slow=np.array(slow), fast=np.array(fast))
 
 def main():
-    x = np.random.random(size=100)
-    fig, axs = plt.subplots(nrows=4, ncols=1)
-    for w in range(4):
-        axs[w].plot(x)
-        x = np.convolve(x, x)
-    fig.tight_layout()
-    savefig("Lab 6 - 1")
-    plt.close()
-
     if not POLY_FILE.exists():
         poly_benchmark()
     benchmark = np.load(POLY_FILE)
@@ -69,25 +54,8 @@ def main():
     plt.xscale('log')
     plt.yscale('log')
     plt.legend(["Direct Multiplication", "FFT Multiplication"])
-    savefig("Lab 6 - 2")
+    savefig("Lab 6 polynomials")
     plt.close()
-
-    x = np.linspace(0, 1, num=1_000_000)
-    sin = np.sin(2 * np.pi * x * 100)
-    plt.plot(sin * rectangle(x.size))
-    plt.plot(sin * hanning(x.size))
-    plt.legend(["Rectangle", "Hanning"])
-    savefig("Lab 6 - 3")
-    plt.close()
-
-    data = np.genfromtxt("Lab 5 Data.csv", delimiter=",", skip_header=1, usecols=(2,), max_rows=72)
-    fig, axs = plt.subplots(nrows=5, ncols=1)
-    axs[0].plot(data)
-    for i, w in enumerate([5, 10, 15, 20]):
-        smooth = np.convolve(data, np.ones(w), 'valid')
-        axs[i + 1].plot(smooth)
-    fig.tight_layout()
-    savefig("Lab 6 - 4 b")
 
 if __name__ == "__main__":
     main()
