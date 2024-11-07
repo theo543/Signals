@@ -16,6 +16,20 @@ from savefig import savefig
 # (c)
 # The maximum possible frequency is once per two hours = 1/7200 Hz = 138.9 uHz
 
+# (h)
+# -- Ideas --
+# Weeks can be detected by filtering frequencies higher then one per day.
+# Dividing the signal into years could by done by detecting holidays which are always on the same date,
+# or if different months look different in the signal (i.e. maybe less cars in summer because of no school?)
+# By checking which weekday the years start on and by looking for holidays which are on different dates each year, the specific year could be found.
+# Besides holidays, other major events such as natural disasters, national elections, etc, could be detected.
+# -- Potential problems --
+# Looking for holidays and major events could be difficult since they don't cause sine waves. Something other than DFT might be needed.
+# The slow increase in traffic could cause confusion.
+# Looking for holidays and major events requires knowing which country the signal is from, or having a large database.
+# Factors which could complicate the signal include: the local economy, road construction, local events (sports games?) and holidays, local weather, etc.
+# Significant research might be needed to create a reliable algorithm to find the date with high confidence from traffic data taken from an unknown location.
+
 def filter_freq(data: np.ndarray, div: int):
     max_idx = data.size // div
     fft = np.fft.fft(data)
