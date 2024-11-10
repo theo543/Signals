@@ -24,9 +24,9 @@ def direct_poly_mul(p, q):
 @timed_fn
 def fft_poly_mul(p, q):
     assert p.size == q.size
-    p = np.pad(p, (0, p.size - 1))
-    q = np.pad(q, (0, q.size - 1))
-    return np.fft.ifft(np.fft.fft(p) * np.fft.fft(q)).real
+    p = np.pad(p, (0, p.size))
+    q = np.pad(q, (0, q.size))
+    return np.fft.ifft(np.fft.fft(p) * np.fft.fft(q))[:-1].real
 
 POLY_FILE = Path("Lab 6 polynomials.npz")
 
