@@ -10,6 +10,7 @@ def main():
         x = np.convolve(x, x)
     fig.tight_layout()
     savefig("Lab 6 convolution bell")
+    # The process quickly converges to a bell curve.
 
 if __name__ == "__main__":
     main()
