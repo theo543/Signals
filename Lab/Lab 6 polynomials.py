@@ -60,7 +60,7 @@ def process_benchmark(file: Path, repeats: int, auto_run: bool):
     plt.xscale('log')
     plt.yscale('log')
     plt.legend(["Direct Max Speed", "FFT Max Speed", "Direct Average Speed", "FFT Average Speed"])
-    savefig("Lab 6 polynomials")
+    savefig(file.with_suffix("").name)
     plt.close()
 
 def main():
