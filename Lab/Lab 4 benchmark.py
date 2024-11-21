@@ -4,6 +4,7 @@ from sys import argv, stdout
 import numpy as np
 from matplotlib import pyplot as plt
 from savefig import savefig
+from plot_with_error import plot_with_error
 
 def time_function(fn, argument):
     start_time = perf_counter()
@@ -43,15 +44,9 @@ def process_benchmark(benchmark_file: Path, repeats_per_test: int):
         np.savez(benchmark_file, dft=dft_times, fft=fft_times)
         print("\nDone running benchmarks.", flush=True)
     benchmark_data = np.load(benchmark_file)
-    def plot_with_error(times):
-        mean = np.mean(times, axis=1)
-        std = np.std(times, axis=1)
-        plt.errorbar(TEST_SIZES, mean, yerr=std)
-        plt.plot(TEST_SIZES, np.min(times, axis=1))
-    plot_with_error(benchmark_data['dft'])
-    plot_with_error(benchmark_data['fft'])
+    plot_with_error(TEST_SIZES, benchmark_data['dft'])
+    plot_with_error(TEST_SIZES, benchmark_data['fft'])
     plt.legend(["DFT Fastest", "FFT Fastest", "DFT Average", "FFT Average"])
-    plt.xscale("log")
     plt.yscale("log")
     plt.title(f"DFT vs FFT Benchmark\n{repeats_per_test} repeats per test")
     savefig(f"Lab 4 - 1 ({repeats_per_test} repeats)")

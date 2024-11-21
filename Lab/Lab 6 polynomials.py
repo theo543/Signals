@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 from matplotlib import pyplot as plt
 from savefig import savefig
+from plot_with_error import plot_with_error
 
 def time_fn(fn, *args):
     start = perf_counter()
@@ -43,10 +44,6 @@ def poly_benchmark(file: Path, repeats: int):
     np.savez(file, sizes=np.array(sizes), slow=np.array(slow), fast=np.array(fast))
     print(f"\nGenerated {file}", flush=True)
 
-def plot_with_error(sizes, data):
-    plt.errorbar(sizes, np.average(data, axis=1), np.std(data, axis=1))
-    plt.plot(sizes, np.min(data, axis=1))
-
 def process_benchmark(file: Path, repeats: int, auto_run: bool):
     if not file.exists():
         if auto_run:
@@ -57,9 +54,10 @@ def process_benchmark(file: Path, repeats: int, auto_run: bool):
     benchmark = np.load(file)
     plot_with_error(benchmark['sizes'], benchmark['slow'])
     plot_with_error(benchmark['sizes'], benchmark['fast'])
-    plt.xscale('log')
     plt.yscale('log')
     plt.legend(["Direct Max Speed", "FFT Max Speed", "Direct Average Speed", "FFT Average Speed"])
+    plt.xticks(rotation=40)
+    plt.tight_layout()
     savefig(file.with_suffix("").name)
     plt.close()
 
