@@ -27,10 +27,10 @@ def main():
     cheby1_b, cheby1_a = cheby1(ORDER, RIPPLE, CUTOFF)
 
     #fig, axs = plt.subplots(nrows=3, ncols=1)
-    plt.plot(data)
-    plt.plot(filtfilt(cheby1_b, cheby1_a, data))
-    plt.plot(filtfilt(butter_b, butter_a, data))
-    plt.legend(["Raw Data", "Chebyshev", "Butter"])
+    plt.stem(data)
+    plt.plot(filtfilt(cheby1_b, cheby1_a, data), color="orange")
+    plt.plot(filtfilt(butter_b, butter_a, data), color="green")
+    plt.legend(["Chebyshev", "Butter", "Raw Data"])
     fig.tight_layout()
     savefig("Lab 6 - e")
     # Both look similar.
