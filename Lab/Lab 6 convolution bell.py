@@ -8,6 +8,7 @@ def main():
     for w in range(4):
         axs[w].plot(x)
         x = np.convolve(x, x)
+        x /= np.abs(np.max(x))
     fig.tight_layout()
     savefig("Lab 6 convolution bell")
     # The process quickly converges to a bell curve.
