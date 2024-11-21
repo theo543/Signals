@@ -65,7 +65,7 @@ def process_benchmark(file: Path, repeats: int, auto_run: bool):
 
 def main():
     process_benchmark(Path("Lab 6 polynomials.npz"), 20, True)
-    process_benchmark(Path("Lab 6 polynomials (2500).npz"), 2500, "--run-big-benchmark" in argv)
+    process_benchmark(Path("Lab 6 polynomials (20000).npz"), 20000, "--run-big-benchmark-20000" in argv)
 
 if __name__ == "__main__":
     main()
