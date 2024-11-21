@@ -49,6 +49,8 @@ def process_benchmark(benchmark_file: Path, repeats_per_test: int):
     plt.legend(["DFT Fastest", "FFT Fastest", "DFT Average", "FFT Average"])
     plt.yscale("log")
     plt.title(f"DFT vs FFT Benchmark\n{repeats_per_test} repeats per test")
+    plt.xlabel("Size")
+    plt.ylabel("Duration")
     savefig(f"Lab 4 - 1 ({repeats_per_test} repeats)")
     plt.close()
 

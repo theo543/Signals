@@ -57,6 +57,8 @@ def process_benchmark(file: Path, repeats: int, auto_run: bool):
     plt.yscale('log')
     plt.legend(["Direct Max Speed", "FFT Max Speed", "Direct Average Speed", "FFT Average Speed"])
     plt.xticks(rotation=40)
+    plt.xlabel("Size")
+    plt.ylabel("Duration")
     plt.tight_layout()
     savefig(file.with_suffix("").name)
     plt.close()
