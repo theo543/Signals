@@ -1,4 +1,5 @@
 import numpy as np
+from matplotlib.axes import Axes
 from matplotlib import pyplot as plt
 from savefig import savefig
 
@@ -19,11 +20,12 @@ def main():
     season = rand_freq(time) + rand_freq(time)
     noise = np.random.normal(0, 0.5, N)
     series = trend + season + noise
+    axs : list[Axes]
     fig, axs = plt.subplots(nrows=4, ncols=1)
-    axs[0].plot(series)
-    axs[1].plot(trend)
-    axs[2].plot(season)
-    axs[3].plot(noise)
+    for ax, array, title in zip(axs, [series, trend, season, noise], ["Series", "Trend", "Season", "Noise"]):
+        ax.set_ylabel(title)
+        ax.plot(array)
+    plt.xlabel("Time")
     fig.tight_layout()
     savefig("Lab 8 components")
     plt.close()
@@ -31,6 +33,8 @@ def main():
     autocorr = np.correlate(series, series, 'full')[len(series):]
     autocorr /= np.max(np.abs(autocorr))
     plt.plot(autocorr)
+    plt.xlabel("Delay")
+    plt.ylabel("Correlation")
     savefig("Lab 8 autocorrelation")
     plt.close()
 
