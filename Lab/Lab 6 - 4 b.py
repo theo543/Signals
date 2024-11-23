@@ -43,8 +43,9 @@ def main():
 
     cheby1_b_2, cheby1_a_2 = cheby1(ORDER_2, RIPPLE_2, CUTOFF)
 
-    plt.plot(data)
-    plt.plot(filtfilt(cheby1_b_2, cheby1_a_2, data))
+    plt.stem(data)
+    plt.plot(filtfilt(cheby1_b_2, cheby1_a_2, data), color="orange")
+    plt.legend(["Chebyshev", "Raw Data"])
     savefig("Lab 6 - f")
 
 if __name__ == "__main__":
