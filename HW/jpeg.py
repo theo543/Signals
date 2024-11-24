@@ -2,8 +2,6 @@ import numpy as np
 from scipy.datasets import face
 from scipy.fft import dctn, idctn
 from matplotlib import pyplot as plt
-from matplotlib.axes import Axes
-#from imageio.v3 import imread
 
 RGB_TO_YCBCR = np.array(
     [[0.299, 0.587, 0.114], [-0.169, -0.331, 0.500], [0.500, -0.419, -0.081]]
@@ -82,7 +80,8 @@ def test_blocks_reversible(N=20):
 
 
 def Q_quality(Q, quality):
-    Q = np.floor(((200 - 2 * quality) * Q + 50) // 100).astype(np.uint8)
+    S = 5000 / quality if quality < 50 else 200 - 2 * quality
+    Q = np.floor((S * Q + 50) / 100).astype(np.uint8)
     Q[Q == 0] = 1
     return Q
 
@@ -92,9 +91,9 @@ def roundtrip(orig_img, Q):
     nonzero = np.count_nonzero(img)
     img = dctn(img, s=(8, 8), axes=(2, 3), norm="ortho")
     img /= Q
-    img = np.round(img)
+    np.round(img, out=img)
     set_to_0 = (nonzero - np.count_nonzero(img)) / img.size
-    img = img * Q
+    img *= Q
     img = idctn(img, s=(8, 8), axes=(2, 3), norm="ortho")
     img = from_blocks(img, *orig_img.shape)
     return set_to_0, img
@@ -133,18 +132,23 @@ def title(orig, noisy, set_to_0):
 
 def main():
     test_blocks_reversible()
-    quality = 75
-    orig_color = face(gray=False)
-    orig_gray = face(gray=True)
-    set_to_0_color, color = roundtrip_color(orig_color, quality)
-    set_to_0_gray, gray = roundtrip_grayscale(orig_gray, quality)
-    axs : list[Axes]
-    _, axs = plt.subplots(nrows=1, ncols=2)
-    axs[0].set_title(title(orig_gray, gray, set_to_0_gray))
-    axs[0].imshow(gray, cmap=plt.get_cmap("gray"))
-    axs[1].set_title(title(orig_color, color, set_to_0_color))
-    axs[1].imshow(color)
-    plt.savefig("roundtrip results.png")
+    for quality in [1, 25, 75, 95, 100]:
+        orig_color = face(gray=False)
+        orig_gray = face(gray=True)
+        set_to_0_color, color = roundtrip_color(orig_color, quality)
+        set_to_0_gray, gray = roundtrip_grayscale(orig_gray, quality)
+        plt.title(title(orig_gray, gray, set_to_0_gray))
+        plt.imshow(gray, cmap=plt.get_cmap("gray"))
+        plt.axis("off")
+        plt.tight_layout()
+        plt.savefig(f"roundtrip {quality} gray.png")
+        plt.close()
+        plt.title(title(orig_color, color, set_to_0_color))
+        plt.imshow(color)
+        plt.axis("off")
+        plt.tight_layout()
+        plt.savefig(f"roundtrip {quality} color.png")
+        plt.close()
 
 
 if __name__ == "__main__":
