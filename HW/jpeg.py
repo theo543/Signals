@@ -1,3 +1,7 @@
+from dataclasses import dataclass
+from typing import Self
+from itertools import combinations
+from heapq import heapify, heappop, heappush
 import numpy as np
 from scipy.datasets import face
 from scipy.fft import dctn, idctn
@@ -37,11 +41,14 @@ Q_CHROMA = np.array(
 
 
 def to_blocks(img):
-    assert len(img.shape) == 2
-    rows, cols = img.shape
+    assert len(img.shape) in [2, 3]
+    rows, cols = img.shape[:2]
     row_blk = (rows + 7) // 8
     col_blk = (cols + 7) // 8
-    result = np.empty((row_blk, col_blk, 8, 8), dtype=img.dtype)
+    if len(img.shape) == 2:
+        result = np.empty((row_blk, col_blk, 8, 8), dtype=img.dtype)
+    else:
+        result = np.empty((row_blk, col_blk, 8, 8, 3), dtype=img.dtype)
     for row in range(rows // 8):
         for col in range(cols // 8):
             result[row, col] = img[row * 8 : (row + 1) * 8, col * 8 : (col + 1) * 8]
@@ -61,10 +68,12 @@ def to_blocks(img):
 
 
 def from_blocks(img, row, col):
-    assert len(img.shape) == 4
-    assert all(dim == 8 for dim in img.shape[2:4])
+    assert len(img.shape) in [4, 5]
     row_blk, col_blk = img.shape[:2]
-    result = np.empty((row_blk * 8, col_blk * 8), dtype=img.dtype)
+    if len(img.shape) == 4:
+        result = np.empty((row_blk * 8, col_blk * 8), dtype=img.dtype)
+    else:
+        result = np.empty((row_blk * 8, col_blk * 8, 3), dtype=img.dtype)
     for i in range(row_blk):
         for j in range(col_blk):
             result[i * 8 : (i + 1) * 8, j * 8 : (j + 1) * 8] = img[i][j]
@@ -85,37 +94,325 @@ def Q_quality(Q, quality):
     Q[Q == 0] = 1
     return Q
 
-
-def roundtrip(orig_img, Q):
-    img = to_blocks(orig_img)
-    nonzero = np.count_nonzero(img)
-    img = dctn(img, s=(8, 8), axes=(2, 3), norm="ortho")
+def quantize(img, Q):
     img /= Q
     np.round(img, out=img)
-    set_to_0 = (nonzero - np.count_nonzero(img)) / img.size
-    img *= Q
-    img = idctn(img, s=(8, 8), axes=(2, 3), norm="ortho")
-    img = from_blocks(img, *orig_img.shape)
-    return set_to_0, img
+    return img.astype(np.int16)
 
-def roundtrip_grayscale(orig_img, quality):
-    assert orig_img.dtype == np.uint8
-    shifted = orig_img.astype(np.int16) - 128
-    q_luma = Q_quality(Q_LUMA, quality)
-    set_to_0, img = roundtrip(shifted, q_luma)
-    unshifted = np.clip(img + 128, 0, 255).astype(np.uint8)
-    return set_to_0, unshifted
+ZIGZAG_IDX = np.array([
+    0,  1,  5,  6, 14, 15, 27, 28,
+    2,  4,  7, 13, 16, 26, 29, 42,
+    3,  8, 12, 17, 25, 30, 41, 43,
+    9, 11, 18, 24, 31, 40, 44, 53,
+    10, 19, 23, 32, 39, 45, 52, 54,
+    20, 22, 33, 38, 46, 51, 55, 60,
+    21, 34, 37, 47, 50, 56, 59, 61,
+    35, 36, 48, 49, 57, 58, 62, 63
+])
 
-def roundtrip_color(orig_img, quality):
-    ycbcr = (orig_img @ RGB_TO_YCBCR).astype(np.int16)
-    q_luma = Q_quality(Q_LUMA, quality)
-    q_chroma = Q_quality(Q_CHROMA, quality)
-    set_to_0 = np.empty(3)
-    set_to_0[0], ycbcr[:, :, 0] = roundtrip(ycbcr[:, :, 0], q_luma)
-    set_to_0[1], ycbcr[:, :, 1] = roundtrip(ycbcr[:, :, 1], q_chroma)
-    set_to_0[2], ycbcr[:, :, 2] = roundtrip(ycbcr[:, :, 2], q_chroma)
-    img = np.clip(ycbcr @ YCBCR_TO_RGB, 0, 255).astype(np.uint8)
-    return np.mean(set_to_0), img
+def zigzag(img: np.ndarray):
+    if len(img.shape) == 4:
+        return img.reshape(img.shape[0], img.shape[1], -1)[:, :, ZIGZAG_IDX]
+    return img.reshape(img.shape[0], img.shape[1], -1, 3)[:, :, ZIGZAG_IDX, :]
+
+def dc_delta_encode(img: np.ndarray):
+    dc = img[:, :, 0, 0]
+    dc[1:] = np.diff(dc, axis=0)
+
+def encoding_size(value: np.ndarray):
+    return np.log2(np.abs(value), where=value!=0, out=np.full_like(value, -1, dtype=np.float64)).astype(np.int16) + 1
+
+ZRL = 0xF0
+EOB = 0x00
+
+def count_codewords(zz_img: np.ndarray, dc_count: np.ndarray, ac_count: np.ndarray):
+    assert len(zz_img.shape) == 3
+    assert zz_img.shape[-1] == 64
+    assert dc_count.shape == (12,)
+    assert ac_count.shape == (256,)
+
+    blocks = zz_img.reshape(-1, 64)
+    blocks = encoding_size(blocks)
+
+    dc_count += np.bincount(blocks[:, 0], minlength=12)
+
+    ac_count[EOB] += blocks.shape[0] - np.count_nonzero(blocks[:, -1])
+
+    for ac_block in blocks[:, 1:]:
+        ac_coeff = np.trim_zeros(ac_block, trim="b")
+        zeros = 0
+        for val in ac_coeff:
+            if val == 0:
+                zeros += 1
+                if zeros == 16:
+                    ac_count[ZRL] += 1
+                    zeros = 0
+                continue
+            ac_count[(zeros << 4) | val] += 1
+            zeros = 0
+
+def build_huffman_table(symbol_count: np.ndarray, subtree_integrity_debug_checks=False) -> tuple[np.ndarray, np.ndarray]:
+    # All-ones code is forbidden in JPEG.
+    # A dummy node with count 0 is used to ensure no real node is assigned all-ones.
+    # Any real node must take at least one left edge in the Huffman tree.
+    symbol_count = np.append(symbol_count, 0)
+    dummy_idx = symbol_count.size - 1
+
+    next_in_subtree = np.full_like(symbol_count, fill_value=-1)
+
+    @dataclass(slots=True, frozen=True)
+    class Subtree:
+        first: int
+        weight: int
+        has_dummy: bool
+
+        def __lt__(self, other: Self) -> bool:
+            if self.weight == other.weight:
+                return self.has_dummy
+            return self.weight < other.weight
+
+        def __post_init__(self):
+            if not subtree_integrity_debug_checks:
+                return
+            weight = 0
+            node = self.first
+            has_dummy = False
+            while node != -1:
+                has_dummy = has_dummy or node == dummy_idx
+                weight += symbol_count[node]
+                node = next_in_subtree[node]
+            assert weight == self.weight
+            assert has_dummy == self.has_dummy
+
+    # Codeword length is equal to depth in the Huffman tree.
+    codeword_length = np.zeros_like(symbol_count)
+
+    # Min-heap of subtrees.
+    subtrees = [Subtree(i, count, i == dummy_idx) for i, count in enumerate(symbol_count) if i == dummy_idx or count > 0]
+    heapify(subtrees)
+
+    while len(subtrees) > 1:
+        a = heappop(subtrees)
+        b = heappop(subtrees)
+
+        node = a.first
+
+        while True:
+            codeword_length[node] += 1
+            next_node = next_in_subtree[node]
+            if next_node == -1:
+                break
+            node = next_node
+
+        next_in_subtree[node] = b.first
+        node = b.first
+
+        while node != -1:
+            codeword_length[node] += 1
+            node = next_in_subtree[node]
+
+        heappush(subtrees, Subtree(a.first, a.weight + b.weight, a.has_dummy or b.has_dummy))
+
+    #  Dummy node should have maximum length.
+    assert codeword_length[-1] == np.max(codeword_length[:-1])
+
+    huffman_count = np.bincount(codeword_length, minlength=33)
+    huffman_values = np.argsort(codeword_length)[huffman_count[0]:]
+    huffman_count[0] = 0
+
+    # There shouldn't be codewords longer than 32 bits.
+    assert huffman_count.size == 33
+
+    return huffman_count, huffman_values
+
+def adjust_huffman_counts(huffman_count: np.ndarray, huffman_values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+
+    assert huffman_count.shape == (33,)
+    assert huffman_count.sum() == huffman_values.size
+    assert huffman_values.size > 0
+
+    # Codewords are limited to 16 bits using the Adjust_BITS algorithm described in the standard (section K.3).
+    # In Huffman codes there is always a pair of symbols with a common prefix in the longest category.
+    # Symbols are removed two at a time from the longest category.
+    # The prefix for the pair is used for one of the symbols.
+    # To make space for the second symbol, a codeword from a shorter category becomes a prefix for two longer codewords.
+
+    i = 32
+    while i > 16:
+        if huffman_count[i] > 0:
+            j = i - 2
+            while huffman_count[j] == 0:
+                j -= 1
+            huffman_count[i] -= 2
+            huffman_count[i - 1] += 1
+            huffman_count[j + 1] += 2
+            huffman_count[j] -= 1
+        else:
+            i = i - 1
+
+    # Remove dummy value.
+    while huffman_count[i] == 0:
+        i -= 1
+    huffman_count[i] -= 1
+    huffman_values = huffman_values[:-1]
+
+    assert huffman_count.sum() == huffman_values.size
+    assert np.all(huffman_count[17:] == 0)
+
+    return huffman_count[:16], huffman_values
+
+def build_adjusted_huffman_table(symbol_count: np.ndarray, subtree_integrity_debug_checks=False):
+    return adjust_huffman_counts(*build_huffman_table(symbol_count, subtree_integrity_debug_checks))
+
+def expand_huffman_table(huffman_count: np.ndarray, huffman_values: np.ndarray):
+    # expanded_table[value] = [codeword_length, codeword]
+    expanded_table = np.zeros(shape=(256, 2), dtype=np.int16)
+
+    value_idx = 0
+    next_codeword = 0
+    for codeword_length, count in enumerate(huffman_count):
+        for _ in range(count):
+            expanded_table[huffman_values[value_idx]] = [codeword_length, next_codeword]
+            value_idx += 1
+            next_codeword += 1
+        next_codeword <<= 1
+
+    return expanded_table
+
+def test_huffman_table(N=20):
+    random = np.random.default_rng()
+
+    def test_build_table(count):
+        table = build_adjusted_huffman_table(count, subtree_integrity_debug_checks=True)
+        expanded = expand_huffman_table(*table)
+        binary_str = [f"{val:0{length}b}" for [length, val] in expanded if length != 0]
+        for bin1, bin2 in combinations(binary_str, 2):
+            assert not bin1.startswith(bin2)
+            assert not bin2.startswith(bin1)
+
+    test_build_table(np.array([1]))
+
+    for _ in range(N):
+        test_build_table(random.integers(0, 1_000, 256))
+
+        test = random.integers(0, 1_000, 256)
+        test[random.integers(0, 256)] = 1_000_000
+        test_build_table(test)
+
+        test = random.integers(0, 1_000, 256)
+        test *= random.integers(0, 2, 256)
+        test_build_table(test)
+
+def build_huffman_tables(zz_img: np.ndarray):
+    # JPEG has separate tables for Y component and for Cb+Cr components.
+    assert len(zz_img.shape) == 3 or zz_img.shape[3] == 2
+
+    dc_count = np.zeros(12, dtype=np.int64)
+    ac_count = np.zeros(256, dtype=np.int64)
+
+    if len(zz_img.shape) == 3:
+        count_codewords(zz_img, dc_count, ac_count)
+    else:
+        count_codewords(zz_img[:, :, :, 0], dc_count, ac_count)
+        count_codewords(zz_img[:, :, :, 1], dc_count, ac_count)
+
+    return build_adjusted_huffman_table(dc_count), build_adjusted_huffman_table(ac_count)
+
+def huffman_encode(zz_img: np.ndarray, dc_table, ac_table):
+    dc_table = expand_huffman_table(*dc_table)
+    ac_table = expand_huffman_table(*ac_table)
+
+    next_byte = 0
+    bytebuffer = np.empty(16, dtype=np.uint8)
+
+    bitbuffer = np.uint64(0)
+    bitcapacity = 64
+
+    def flush():
+        nonlocal bitbuffer
+        nonlocal bitcapacity
+        nonlocal next_byte
+        if next_byte + 16 > bytebuffer.size:
+            bytebuffer.resize(bytebuffer.size * 2, refcheck=False)
+        while bitcapacity <= 56:
+            byte = np.right_shift(bitbuffer, 56, dtype=np.uint64)
+            bytebuffer[next_byte] = byte
+            next_byte += 1
+            if byte == 0xFF:
+                bytebuffer[next_byte] = 0
+                next_byte += 1
+            bitbuffer = np.left_shift(bitbuffer, 8, dtype=np.uint64)
+            bitcapacity += 8
+
+    def final_flush():
+        nonlocal bitbuffer
+        nonlocal bitcapacity
+        nonlocal next_byte
+        flush()
+        if bitcapacity != 64:
+            last_byte = np.right_shift(bitbuffer, 56, dtype=np.uint64)
+            last_byte |= np.right_shift(255, 64 - bitcapacity, dtype=np.uint64)
+            if next_byte + 2 > bytebuffer.size:
+                bytebuffer.resize(bytebuffer.size + 2, refcheck=False)
+            bytebuffer[next_byte] = last_byte
+            next_byte += 1
+            if last_byte == 0xFF:
+                bytebuffer[next_byte] = 0
+                next_byte += 1
+            bitcapacity = 64
+
+    def add_bits(length, bits):
+        nonlocal bitbuffer
+        nonlocal bitcapacity
+        if length > bitcapacity:
+            flush()
+        bitbuffer |= np.left_shift(bits, bitcapacity - length, dtype=np.uint64)
+        bitcapacity -= length
+
+    # TODO
+
+    # Remove unused space.
+    bytebuffer.resize(next_byte)
+
+    return bytebuffer
+
+def lossy_compress(blocks: np.ndarray, q: np.ndarray):
+    dct = dctn(blocks, s=(8, 8), axes=(2, 3), norm="ortho")
+    dct /= q
+    return dct.round()
+
+def lossy_uncompress(blocks: np.ndarray, q: np.ndarray) -> np.ndarray:
+    result = idctn(blocks * q, s=(8, 8), axes=(2, 3), norm="ortho")
+    return np.round(result, out=result)
+
+def lossy_compress_color(img: np.ndarray, q_luma: np.ndarray, q_chroma: np.ndarray):
+    img = to_blocks(img)
+    ycbcr = (img @ RGB_TO_YCBCR).round().astype(np.int16)
+    ycbcr[:, :, :, :, 0] -= 128
+    ycbcr[:, :, :, :, 0] = lossy_compress(ycbcr[:, :, :, :, 0], q_luma)
+    ycbcr[:, :, :, :, 1] = lossy_compress(ycbcr[:, :, :, :, 1], q_chroma)
+    ycbcr[:, :, :, :, 2] = lossy_compress(ycbcr[:, :, :, :, 2], q_chroma)
+    return ycbcr
+
+def lossy_uncompress_color(ycbcr: np.ndarray, q_luma: np.ndarray, q_chroma: np.ndarray, original_shape):
+    ycbcr[:, :, :, :, 0] = lossy_uncompress(ycbcr[:, :, :, :, 0], q_luma)
+    ycbcr[:, :, :, :, 0] += 128
+    ycbcr[:, :, :, :, 1] = lossy_uncompress(ycbcr[:, :, :, :, 1], q_chroma)
+    ycbcr[:, :, :, :, 2] = lossy_uncompress(ycbcr[:, :, :, :, 2], q_chroma)
+    img = (ycbcr @ YCBCR_TO_RGB).round()
+    img = np.round(img, out=img)
+    img = np.clip(img, 0, 255, out=img)
+    return from_blocks(img.astype(np.uint8), *original_shape)
+
+def lossy_compress_grayscale(img: np.ndarray, q: np.ndarray):
+    img = to_blocks(img.astype(np.int16))
+    img -= 128
+    return lossy_compress(img, q).astype(np.int16)
+
+def lossy_uncompress_grayscale(img: np.ndarray, q: np.ndarray, original_shape):
+    img = lossy_uncompress(img, q)
+    img += 128
+    return from_blocks(np.clip(img, 0, 255, out=img).astype(np.uint8), *original_shape)
 
 def mse(orig, noisy):
     orig = orig.astype(np.float64)
@@ -127,29 +424,19 @@ def snr(orig, noisy):
     noisy = noisy.astype(np.float64)
     return np.sum(np.square(orig)) / np.sum(np.square(orig - noisy))
 
-def title(orig, noisy, set_to_0):
-    return f"MSE = {mse(orig, noisy):.2f}\nSNR = {snr(orig, noisy):.2f}\nZeroed Frequencies = {set_to_0 * 100:.0f}%"
+def title(orig, noisy):
+    return f"MSE = {mse(orig, noisy):.2f}\nSNR = {snr(orig, noisy):.2f}"
 
 def main():
     test_blocks_reversible()
-    for quality in [1, 25, 75, 95, 100]:
-        orig_color = face(gray=False)
-        orig_gray = face(gray=True)
-        set_to_0_color, color = roundtrip_color(orig_color, quality)
-        set_to_0_gray, gray = roundtrip_grayscale(orig_gray, quality)
-        plt.title(title(orig_gray, gray, set_to_0_gray))
-        plt.imshow(gray, cmap=plt.get_cmap("gray"))
-        plt.axis("off")
-        plt.tight_layout()
-        plt.savefig(f"roundtrip {quality} gray.png")
-        plt.close()
-        plt.title(title(orig_color, color, set_to_0_color))
-        plt.imshow(color)
-        plt.axis("off")
-        plt.tight_layout()
-        plt.savefig(f"roundtrip {quality} color.png")
-        plt.close()
+    test_huffman_table()
 
+    img = face(gray=True)
+    q_luma = Q_quality(Q_LUMA, 70)
+    img_comp = lossy_compress_grayscale(img, q_luma)
+    zz_img = zigzag(img_comp)
+    tables = build_huffman_tables(zz_img)
+    entropy_coded_data = huffman_encode(zz_img, *tables)
 
 if __name__ == "__main__":
     main()
