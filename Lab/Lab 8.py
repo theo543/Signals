@@ -12,13 +12,13 @@ def train_ar_model(series: np.ndarray, p: int, m: int):
     return model
 
 def predict(series: np.ndarray, model: np.ndarray):
-    predictions = np.zeros_like(series)
+    predictions = np.zeros_like(series)[model.size:]
     for i in range(model.size, series.size):
-        predictions[i] = model.T @ series[i - model.size : i][::-1]
+        predictions[i - model.size] = model.T @ series[i - model.size : i][::-1]
     return predictions
 
-def mse(series: np.ndarray, prediction: np.ndarray):
-    return np.square(series - prediction).mean()
+def mse(series: np.ndarray, prediction: np.ndarray, p: int):
+    return np.square(series[p:] - prediction).mean()
 
 def normalize(autocorr: np.ndarray):
     autocorr /= np.max(np.abs(autocorr))
@@ -70,8 +70,48 @@ def main():
     plt.plot(prediction)
     plt.legend(["Series", "Prediction"])
     plt.xlabel("Time")
-    plt.title(f"MSE = {mse(series, prediction):.3f}")
+    plt.title(f"MSE = {mse(series, prediction, p):.3f}")
     savefig("Lab 8 prediction")
+    plt.close()
+
+    train_percent = 0.2
+    train_size = int(series.size * train_percent)
+    train = series[:train_size]
+
+    best_mse = np.inf
+    p_step = 10
+    m_step = 150
+    p_max = int(train.size * 0.2)
+    random = np.random.default_rng(seed=0)
+    best_p = random.integers(2, p_max)
+    best_m = random.integers(1, train.size - 1)
+    no_change = 0
+    convergence_threshold = 5_000
+    while no_change < convergence_threshold:
+        p = int(np.clip(best_p + random.normal(0, p_step), 2, p_max))
+        m = int(np.clip(best_m + random.normal(0, m_step), 1, train.size - p))
+        model = train_ar_model(train, p=p, m=m)
+        new_mse = mse(train, predict(train, model), p)
+        if best_mse > new_mse:
+            best_p = p
+            best_m = m
+            best_mse = new_mse
+            no_change = 0
+        else:
+            no_change += 1
+        print(f"p = {best_p:3d}, m = {best_m:3d}, MSE = {best_mse:.3f}, will stop if no change for {convergence_threshold - no_change:5d} more iterations", end="\r")
+    print()
+
+    full_prediction = predict(series, train_ar_model(train, p=best_p, m=best_m))
+    full_mse = mse(series, full_prediction, best_p)
+    plt.plot(np.arange(series.size), series)
+    plt.plot(np.arange(best_p, series.size), full_prediction)
+    plt.axvline(train_size, color="red", linestyle="--")
+    plt.text(train_size - 200, train.max(), "Train Data", color="red")
+    plt.legend(["Series", "Prediction"])
+    plt.xlabel("Time")
+    plt.title(f"MSE on full data = {full_mse:.3f}\nMSE on train data = {best_mse:.3f}")
+    savefig("Lab 8 hyperparameter tuning")
 
 if __name__ == "__main__":
     main()
