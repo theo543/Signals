@@ -9,6 +9,19 @@ def train_ar(data, size):
         matrix[:, i] = data[size - i: data.size - i].reverse()
     return matrix
 
+def normalize(autocorr: np.ndarray):
+    autocorr /= np.max(np.abs(autocorr))
+    return autocorr
+
+def autocorrelation(series: np.ndarray):
+    autocorr = np.zeros(shape=series.size)
+    for delay in range(series.size):
+        autocorr[delay] = np.sum((series[:-delay] if delay > 0 else series) * series[delay:])
+    return normalize(autocorr)
+
+def autocorrelation_numpy(series: np.ndarray):
+    return normalize(np.correlate(series, series, 'full')[series.size - 1:])
+
 def main():
     N = 1000
     time = np.arange(N)
@@ -30,8 +43,8 @@ def main():
     savefig("Lab 8 components")
     plt.close()
 
-    autocorr = np.correlate(series, series, 'full')[len(series):]
-    autocorr /= np.max(np.abs(autocorr))
+    autocorr = autocorrelation(series)
+    assert np.allclose(autocorr, autocorrelation_numpy(series))
     plt.plot(autocorr)
     plt.xlabel("Delay")
     plt.ylabel("Correlation")
