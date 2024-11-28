@@ -3,11 +3,22 @@ from matplotlib.axes import Axes
 from matplotlib import pyplot as plt
 from savefig import savefig
 
-def train_ar(data, size):
-    matrix = np.empty((data.size - size, 2))
-    for i in range(size):
-        matrix[:, i] = data[size - i: data.size - i].reverse()
-    return matrix
+def train_ar_model(series: np.ndarray, p: int, m: int):
+    matrix = np.empty((m, p))
+    for i in range(p):
+        matrix[:, i] = series[p - i: p - i + m][::-1]
+    model, _, _, _ = np.linalg.lstsq(matrix, series[-m:], rcond=None)
+    assert model.shape == (p,)
+    return model
+
+def predict(series: np.ndarray, model: np.ndarray):
+    predictions = np.zeros_like(series)
+    for i in range(model.size, series.size):
+        predictions[i] = model.T @ series[i - model.size : i][::-1]
+    return predictions
+
+def mse(series: np.ndarray, prediction: np.ndarray):
+    return np.square(series - prediction).mean()
 
 def normalize(autocorr: np.ndarray):
     autocorr /= np.max(np.abs(autocorr))
@@ -27,7 +38,7 @@ def main():
     time = np.arange(N)
     a = np.random.random() / 10000
     b = np.random.random() / 100
-    def rand_freq(time):
+    def rand_freq(time) -> np.ndarray:
         return np.sin(2 * np.pi * time * (np.random.random() / 30)) * (time / 400)
     trend = a * np.square(time) + b * time
     season = rand_freq(time) + rand_freq(time)
@@ -50,6 +61,17 @@ def main():
     plt.ylabel("Correlation")
     savefig("Lab 8 autocorrelation")
     plt.close()
+
+    p = 5
+    m = 700
+    model = train_ar_model(series, p=p, m=m)
+    prediction = predict(series, model)
+    plt.plot(series)
+    plt.plot(prediction)
+    plt.legend(["Series", "Prediction"])
+    plt.xlabel("Time")
+    plt.title(f"MSE = {mse(series, prediction):.3f}")
+    savefig("Lab 8 prediction")
 
 if __name__ == "__main__":
     main()
