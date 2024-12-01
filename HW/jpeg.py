@@ -2,11 +2,10 @@ from dataclasses import dataclass
 from typing import Self, BinaryIO
 from itertools import combinations
 from heapq import heapify, heappop, heappush
-from contextlib import contextmanager
 import numpy as np
+import numba
 from scipy.datasets import face
 from scipy.fft import dctn, idctn
-from matplotlib import pyplot as plt
 
 RGB_TO_YCBCR = np.array(
     [[0.299, 0.587, 0.114], [-0.169, -0.331, 0.500], [0.500, -0.419, -0.081]]
@@ -115,19 +114,43 @@ ZIGZAG_IDX = np.argsort(INVERSE_ZIGZAG_IDX)
 
 def zigzag(img: np.ndarray):
     if len(img.shape) == 4:
-        return img.reshape(img.shape[0], img.shape[1], -1)[:, :, ZIGZAG_IDX]
-    return img.reshape(img.shape[0], img.shape[1], -1, 3)[:, :, ZIGZAG_IDX, :]
+        return img.reshape(img.shape[0], img.shape[1], -1)[:, :, ZIGZAG_IDX].copy()
+    return img.reshape(img.shape[0], img.shape[1], -1, 3)[:, :, ZIGZAG_IDX, :].copy()
 
+@numba.jit(cache=True)
 def dc_delta_encode(img: np.ndarray):
-    dc = img[:, :, 0, 0].reshape(-1)
-    dc[1:] = np.diff(dc, axis=0)
+    blocks = img.reshape(-1, 64)
+    prev = blocks[0, 0]
+    for block in blocks[1:]:
+        dc = block[0]
+        block[0] = dc - prev
+        prev = dc
 
+@numba.jit(cache=True)
+def dc_delta_decode(img: np.ndarray):
+    blocks = img.reshape(-1, 64)
+    prev = blocks[0, 0]
+    for block in blocks[1:]:
+        dc = block[0]
+        block[0] = dc + prev
+        prev = block[0]
+
+@numba.jit(cache=True)
 def encoding_size(value: np.ndarray):
-    return np.log2(np.abs(value), where=value!=0, out=np.full_like(value, -1, dtype=np.float64)).astype(np.int16) + 1
+    shape = value.shape
+    value = value.ravel()
+    sizes = np.empty_like(value, dtype=np.int16)
+    for i, val in enumerate(value):
+        if val == 0:
+            sizes[i] = 0
+        else:
+            sizes[i] = int(np.log2(np.abs(val))) + 1
+    return sizes.reshape(shape)
 
 ZRL = 0xF0
 EOB = 0x00
 
+@numba.jit(cache=True)
 def count_codewords(zz_img: np.ndarray, dc_count: np.ndarray, ac_count: np.ndarray):
     assert len(zz_img.shape) == 3
     assert zz_img.shape[-1] == 64
@@ -272,6 +295,7 @@ def adjust_huffman_counts(huffman_count: np.ndarray, huffman_values: np.ndarray)
 def build_adjusted_huffman_table(symbol_count: np.ndarray, subtree_integrity_debug_checks=False):
     return adjust_huffman_counts(*build_huffman_table(symbol_count, subtree_integrity_debug_checks))
 
+@numba.jit(cache=True)
 def expand_huffman_table(huffman_count: np.ndarray, huffman_values: np.ndarray):
     # expanded_table[value] = [codeword_length, codeword]
     expanded_table = np.zeros(shape=(256, 2), dtype=np.uint16)
@@ -326,90 +350,103 @@ def build_huffman_tables(zz_img: np.ndarray):
 
     return build_adjusted_huffman_table(dc_count), build_adjusted_huffman_table(ac_count)
 
-def huffman_encode(zz_img: np.ndarray, dc_table, ac_table):
-    dc_table = expand_huffman_table(*dc_table)
-    ac_table = expand_huffman_table(*ac_table)
+@numba.experimental.jitclass
+class ByteBuffer:
+    _next_byte: numba.uint64
+    _bytebuffer: numba.uint8[:]
+    _bitbuffer: numba.uint64
+    _bitcapacity: numba.uint8
 
-    next_byte = 0
-    bytebuffer = np.empty(16, dtype=np.uint8)
+    def __init__(self):
+        self._next_byte = 0
+        self._bytebuffer = np.empty(16, dtype=np.uint8)
+        self._bitbuffer = 0
+        self._bitcapacity = 64
 
-    bitbuffer = np.uint64(0)
-    bitcapacity = 64
+    def _resize(self, new_size):
+        new_buffer = np.empty(new_size, dtype=np.uint8)
+        new_buffer[:self._bytebuffer.size] = self._bytebuffer
+        self._bytebuffer = new_buffer
 
-    def add_byte(byte: int):
-        nonlocal next_byte
-        bytebuffer[next_byte] = byte
-        next_byte += 1
+    def _add_byte(self, byte):
+        self._bytebuffer[self._next_byte] = byte
+        self._next_byte += 1
         if byte == 0xFF:
-            bytebuffer[next_byte] = 0
-            next_byte += 1
+            self._bytebuffer[self._next_byte] = 0
+            self._next_byte += 1
 
-    def flush():
-        nonlocal bitbuffer
-        nonlocal bitcapacity
-        nonlocal next_byte
-        if next_byte + 16 > bytebuffer.size:
-            bytebuffer.resize(bytebuffer.size * 2, refcheck=False)
-        while bitcapacity <= 56:
-            byte = np.right_shift(bitbuffer, 56, dtype=np.uint64)
-            add_byte(byte)
-            bitbuffer = np.left_shift(bitbuffer, 8, dtype=np.uint64)
-            bitcapacity += 8
+    def _flush(self):
+        if self._next_byte + 16 > self._bytebuffer.size:
+            self._resize(self._bytebuffer.size * 2)
+        while self._bitcapacity <= 56:
+            byte = self._bitbuffer >> 56
+            self._add_byte(byte)
+            self._bitbuffer <<= 8
+            self._bitcapacity += 8
 
-    def final_flush():
-        nonlocal bitbuffer
-        nonlocal bitcapacity
-        nonlocal next_byte
-        flush()
-        if bitcapacity != 64:
-            last_byte = np.right_shift(bitbuffer, 56, dtype=np.uint64)
-            last_byte |= np.right_shift(255, 64 - bitcapacity, dtype=np.uint64)
-            bytebuffer.resize(next_byte + 1 + (last_byte == 0xFF), refcheck=False)
-            add_byte(last_byte)
-            bitcapacity = 64
+    def final_flush(self) -> np.ndarray:
+        self._flush()
+        if self._bitcapacity != 64:
+            last_byte = self._bitbuffer >> 56
+            if self._next_byte + 2 >= self._bytebuffer.size:
+                self._resize(self._bytebuffer.size + 2)
+            last_byte |= 255 >> (64 - self._bitcapacity)
+            self._add_byte(last_byte)
+            self._bitcapacity = 64
 
-    def add_bits(length, bits):
-        assert 0 <= length <= 16
-        assert 0 <= bits < (1 << length)
-        nonlocal bitbuffer
-        nonlocal bitcapacity
-        if length > bitcapacity:
-            flush()
-        bitbuffer |= np.left_shift(bits, bitcapacity - length, dtype=np.uint64)
-        bitcapacity -= length
+        return self._bytebuffer[:self._next_byte]
 
-    zz_img = zz_img.reshape(-1, 64)
+    def add_bits(self, length, bits):
+        if length > self._bitcapacity:
+            self._flush()
+        self._bitbuffer |= bits << (self._bitcapacity - length)
+        self._bitcapacity -= length
 
-    for block in zz_img:
+@numba.jit(cache=True)
+def huffman_encode(zz_img: np.ndarray, dc_table: tuple[np.ndarray, np.ndarray], ac_table: tuple[np.ndarray, np.ndarray]) -> np.ndarray:
+    bytebuffer = ByteBuffer()
+
+    expanded_dc_table = expand_huffman_table(*dc_table)
+    expanded_ac_table = expand_huffman_table(*ac_table)
+
+    def add_dc_codeword(value):
+        length, codeword = expanded_dc_table[value]
+        bytebuffer.add_bits(length, codeword)
+
+    def add_ac_codeword(value):
+        length, codeword = expanded_ac_table[value]
+        bytebuffer.add_bits(length, codeword)
+
+    flat_zz_img = zz_img.reshape(-1, 64)
+
+    for block in flat_zz_img:
         eob = block[-1] == 0
         block = np.trim_zeros(block, trim='b')
         if block.size == 0:
-            add_bits(*dc_table[0])
-            add_bits(*ac_table[EOB])
+            add_dc_codeword(0)
+            add_ac_codeword(EOB)
             continue
         sizes = encoding_size(block)
         encodings = block + (2 ** sizes - 1) * (block < 0)
-        add_bits(*dc_table[sizes[0]])
-        add_bits(sizes[0], encodings[0])
+        add_dc_codeword(sizes[0])
+        bytebuffer.add_bits(sizes[0], encodings[0])
         zeros = 0
         for i in range(1, block.size):
             if sizes[i] == 0:
                 zeros += 1
                 if zeros == 16:
-                    add_bits(*ac_table[ZRL])
+                    add_ac_codeword(ZRL)
                     zeros = 0
             else:
                 assert zeros < 16
                 assert sizes[i] < 16
-                add_bits(*ac_table[(zeros << 4) | sizes[i]])
-                add_bits(sizes[i], encodings[i])
+                add_ac_codeword((zeros << 4) | sizes[i])
+                bytebuffer.add_bits(sizes[i], encodings[i])
                 zeros = 0
         if eob:
-            add_bits(*ac_table[EOB])
+            add_ac_codeword(EOB)
 
-    final_flush()
-
-    return bytebuffer
+    return bytebuffer.final_flush()
 
 def lossy_compress(blocks: np.ndarray, q: np.ndarray):
     dct = dctn(blocks, s=(8, 8), axes=(2, 3), norm="ortho")
