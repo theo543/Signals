@@ -1,7 +1,8 @@
 from dataclasses import dataclass
-from typing import Self
+from typing import Self, BinaryIO
 from itertools import combinations
 from heapq import heapify, heappop, heappush
+from contextlib import contextmanager
 import numpy as np
 from scipy.datasets import face
 from scipy.fft import dctn, idctn
@@ -90,7 +91,7 @@ def test_blocks_reversible(N=20):
 
 def Q_quality(Q, quality):
     S = 5000 / quality if quality < 50 else 200 - 2 * quality
-    Q = np.floor((S * Q + 50) / 100).astype(np.uint8)
+    Q = np.floor((S * Q + 50) / 100).astype(np.uint16)
     Q[Q == 0] = 1
     return Q
 
@@ -116,7 +117,7 @@ def zigzag(img: np.ndarray):
     return img.reshape(img.shape[0], img.shape[1], -1, 3)[:, :, ZIGZAG_IDX, :]
 
 def dc_delta_encode(img: np.ndarray):
-    dc = img[:, :, 0, 0]
+    dc = img[:, :, 0, 0].reshape(-1)
     dc[1:] = np.diff(dc, axis=0)
 
 def encoding_size(value: np.ndarray):
@@ -132,23 +133,22 @@ def count_codewords(zz_img: np.ndarray, dc_count: np.ndarray, ac_count: np.ndarr
     assert ac_count.shape == (256,)
 
     blocks = zz_img.reshape(-1, 64)
-    blocks = encoding_size(blocks)
+    sizes = encoding_size(blocks)
 
-    dc_count += np.bincount(blocks[:, 0], minlength=12)
+    dc_count += np.bincount(sizes[:, 0], minlength=12)
 
-    ac_count[EOB] += blocks.shape[0] - np.count_nonzero(blocks[:, -1])
+    ac_count[EOB] += sizes.shape[0] - np.count_nonzero(sizes[:, -1])
 
-    for ac_block in blocks[:, 1:]:
-        ac_coeff = np.trim_zeros(ac_block, trim="b")
+    for ac_block in sizes[:, 1:]:
         zeros = 0
-        for val in ac_coeff:
-            if val == 0:
+        for size in np.trim_zeros(ac_block, trim="b"):
+            if size == 0:
                 zeros += 1
                 if zeros == 16:
                     ac_count[ZRL] += 1
                     zeros = 0
                 continue
-            ac_count[(zeros << 4) | val] += 1
+            ac_count[(zeros << 4) | size] += 1
             zeros = 0
 
 def build_huffman_table(symbol_count: np.ndarray, subtree_integrity_debug_checks=False) -> tuple[np.ndarray, np.ndarray]:
@@ -223,6 +223,9 @@ def build_huffman_table(symbol_count: np.ndarray, subtree_integrity_debug_checks
     # There shouldn't be codewords longer than 32 bits.
     assert huffman_count.size == 33
 
+    assert huffman_count.max() <= 256
+    huffman_count = huffman_count.astype(np.uint8)
+
     return huffman_count, huffman_values
 
 def adjust_huffman_counts(huffman_count: np.ndarray, huffman_values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -255,18 +258,21 @@ def adjust_huffman_counts(huffman_count: np.ndarray, huffman_values: np.ndarray)
         i -= 1
     huffman_count[i] -= 1
     huffman_values = huffman_values[:-1]
+    assert huffman_values.max() < 256
+    huffman_values = huffman_values.astype(np.uint8)
 
-    assert huffman_count.sum() == huffman_values.size
     assert np.all(huffman_count[17:] == 0)
+    huffman_count = huffman_count[:17]
+    assert huffman_count.sum() == huffman_values.size
 
-    return huffman_count[:16], huffman_values
+    return huffman_count, huffman_values
 
 def build_adjusted_huffman_table(symbol_count: np.ndarray, subtree_integrity_debug_checks=False):
     return adjust_huffman_counts(*build_huffman_table(symbol_count, subtree_integrity_debug_checks))
 
 def expand_huffman_table(huffman_count: np.ndarray, huffman_values: np.ndarray):
     # expanded_table[value] = [codeword_length, codeword]
-    expanded_table = np.zeros(shape=(256, 2), dtype=np.int16)
+    expanded_table = np.zeros(shape=(256, 2), dtype=np.uint16)
 
     value_idx = 0
     next_codeword = 0
@@ -328,6 +334,14 @@ def huffman_encode(zz_img: np.ndarray, dc_table, ac_table):
     bitbuffer = np.uint64(0)
     bitcapacity = 64
 
+    def add_byte(byte: int):
+        nonlocal next_byte
+        bytebuffer[next_byte] = byte
+        next_byte += 1
+        if byte == 0xFF:
+            bytebuffer[next_byte] = 0
+            next_byte += 1
+
     def flush():
         nonlocal bitbuffer
         nonlocal bitcapacity
@@ -336,11 +350,7 @@ def huffman_encode(zz_img: np.ndarray, dc_table, ac_table):
             bytebuffer.resize(bytebuffer.size * 2, refcheck=False)
         while bitcapacity <= 56:
             byte = np.right_shift(bitbuffer, 56, dtype=np.uint64)
-            bytebuffer[next_byte] = byte
-            next_byte += 1
-            if byte == 0xFF:
-                bytebuffer[next_byte] = 0
-                next_byte += 1
+            add_byte(byte)
             bitbuffer = np.left_shift(bitbuffer, 8, dtype=np.uint64)
             bitcapacity += 8
 
@@ -352,16 +362,13 @@ def huffman_encode(zz_img: np.ndarray, dc_table, ac_table):
         if bitcapacity != 64:
             last_byte = np.right_shift(bitbuffer, 56, dtype=np.uint64)
             last_byte |= np.right_shift(255, 64 - bitcapacity, dtype=np.uint64)
-            if next_byte + 2 > bytebuffer.size:
-                bytebuffer.resize(bytebuffer.size + 2, refcheck=False)
-            bytebuffer[next_byte] = last_byte
-            next_byte += 1
-            if last_byte == 0xFF:
-                bytebuffer[next_byte] = 0
-                next_byte += 1
+            bytebuffer.resize(next_byte + 1 + (last_byte == 0xFF), refcheck=False)
+            add_byte(last_byte)
             bitcapacity = 64
 
     def add_bits(length, bits):
+        assert 0 <= length <= 16
+        assert 0 <= bits < (1 << length)
         nonlocal bitbuffer
         nonlocal bitcapacity
         if length > bitcapacity:
@@ -369,17 +376,44 @@ def huffman_encode(zz_img: np.ndarray, dc_table, ac_table):
         bitbuffer |= np.left_shift(bits, bitcapacity - length, dtype=np.uint64)
         bitcapacity -= length
 
-    # TODO
+    zz_img = zz_img.reshape(-1, 64)
 
-    # Remove unused space.
-    bytebuffer.resize(next_byte)
+    for block in zz_img:
+        eob = block[-1] == 0
+        block = np.trim_zeros(block, trim='b')
+        if block.size == 0:
+            add_bits(*dc_table[0])
+            add_bits(*ac_table[EOB])
+            continue
+        sizes = encoding_size(block)
+        encodings = block + (2 ** sizes - 1) * (block < 0)
+        add_bits(*dc_table[sizes[0]])
+        add_bits(sizes[0], encodings[0])
+        zeros = 0
+        for i in range(1, block.size):
+            if sizes[i] == 0:
+                zeros += 1
+                if zeros == 16:
+                    add_bits(*ac_table[ZRL])
+                    zeros = 0
+            else:
+                assert zeros < 16
+                assert sizes[i] < 16
+                add_bits(*ac_table[(zeros << 4) | sizes[i]])
+                add_bits(sizes[i], encodings[i])
+                zeros = 0
+        if eob:
+            add_bits(*ac_table[EOB])
+
+    final_flush()
 
     return bytebuffer
 
 def lossy_compress(blocks: np.ndarray, q: np.ndarray):
     dct = dctn(blocks, s=(8, 8), axes=(2, 3), norm="ortho")
     dct /= q
-    return dct.round()
+    assert -(2 ** 15) <= dct.min() <= dct.max() <= 2 ** 15
+    return np.round(dct, out=dct)
 
 def lossy_uncompress(blocks: np.ndarray, q: np.ndarray) -> np.ndarray:
     result = idctn(blocks * q, s=(8, 8), axes=(2, 3), norm="ortho")
@@ -427,16 +461,118 @@ def snr(orig, noisy):
 def title(orig, noisy):
     return f"MSE = {mse(orig, noisy):.2f}\nSNR = {snr(orig, noisy):.2f}"
 
+def write_huffman_table(file: BinaryIO, table: tuple[np.ndarray, np.ndarray], is_ac: bool, table_id: int):
+    huffman_lengths, huffman_values = table
+    assert huffman_lengths.shape == (17,)
+    assert huffman_lengths[0] == 0
+    assert huffman_values.shape == (huffman_lengths.sum(),)
+    assert huffman_values.itemsize == 1
+    assert huffman_lengths.itemsize == 1
+
+    file.write(
+        b"\xFF\xC4" + # DHT
+        int(2 + 1 + 16 + huffman_lengths.sum()).to_bytes(2, 'big') +
+        int((is_ac << 4) + table_id).to_bytes(1)
+    )
+    huffman_lengths[1:].tofile(file, sep="")
+    huffman_values.tofile(file, sep="")
+
+def write_quantization_matrix(file: BinaryIO, q: np.ndarray, matrix_id: int):
+    assert q.shape == (8, 8)
+    assert q.itemsize == 2
+
+    extended = 1
+    if q.max() < 256:
+        extended = 0
+        q = q.astype(np.uint8)
+
+    file.write(
+        b"\xFF\xDB" + # DQT
+        int(2 + 1 + 64 * q.itemsize).to_bytes(2, 'big') +
+        ((extended << 4) + matrix_id).to_bytes(1)
+    )
+    file.flush()
+    q.reshape(64).tofile(file, sep="")
+
+@dataclass
+class SOFComponentParameters:
+    component_id: int
+    horizontal_sampling: int
+    vertical_sampling: int
+    quantization_table: int
+
+def write_start_of_frame(file: BinaryIO, height: int, width: int, bits_per_sample: int, components: list[SOFComponentParameters]):
+    file.write(
+        b"\xFF\xC0" + # SOF0
+        int(2 + 1 + 2 + 2 + 1 + 3 * len(components)).to_bytes(2, 'big') +
+        bits_per_sample.to_bytes(1) +
+        height.to_bytes(2, 'big') +
+        width.to_bytes(2, 'big') +
+        len(components).to_bytes(1)
+    )
+    for component in components:
+        file.write(
+            component.component_id.to_bytes(1) +
+            ((component.horizontal_sampling << 4) + component.vertical_sampling).to_bytes(1) +
+            component.quantization_table.to_bytes(1)
+        )
+
+@dataclass
+class SOSComponentParameters:
+    component_id: int
+    dc_table_id: int
+    ac_table_id: int
+
+def write_start_of_scan(file: BinaryIO, components: list[SOSComponentParameters]):
+    file.write(
+        b"\xFF\xDA" + # SOS
+        int(2 + 1 + 2 * len(components) + 3).to_bytes(2, 'big') +
+        len(components).to_bytes(1)
+    )
+    for component in components:
+        file.write(
+            component.component_id.to_bytes(1) +
+            ((component.dc_table_id << 4) + component.ac_table_id).to_bytes(1)
+        )
+    file.write(b"\x00\x3F\x00") # Start of spectral selection = 0, end of spectral selection = 63, successive approximation (set to 0 in sequential JPEG)
+
+def write_app0(file: BinaryIO):
+    file.write(
+        b"\xFF\xE0" + # APP0
+        (2 + 5 + 2 + 1 + 2 + 2 + 2).to_bytes(2, 'big') +
+        b"JFIF\0" +
+        b"\x01\x02" +
+        b"\0" +
+        b"\0\0" +
+        b"\0\0" +
+        b"\0" +
+        b"\0"
+    )
+
+def write_grayscale_jpeg(file: BinaryIO, height: int, width: int, q_luma: np.ndarray, luma_dc_table: tuple[np.ndarray, np.ndarray], luma_ac_table: tuple[np.ndarray, np.ndarray], entropy_coded_data: np.ndarray):
+    file.write(b"\xFF\xD8") # SOI
+    write_app0(file)
+    write_quantization_matrix(file, q_luma, 0)
+    write_start_of_frame(file, height, width, 8, [SOFComponentParameters(1, 1, 1, 0)])
+    write_huffman_table(file, luma_dc_table, False, 0)
+    write_huffman_table(file, luma_ac_table, True, 0)
+    write_start_of_scan(file, [SOSComponentParameters(1, 0, 0)])
+    entropy_coded_data.tofile(file, sep="")
+    file.write(b"\xFF\xD9") # EOI
+
 def main():
     test_blocks_reversible()
     test_huffman_table()
 
     img = face(gray=True)
-    q_luma = Q_quality(Q_LUMA, 70)
+    q_luma = Q_quality(Q_LUMA, 100)
     img_comp = lossy_compress_grayscale(img, q_luma)
+    dc_delta_encode(img_comp)
     zz_img = zigzag(img_comp)
     tables = build_huffman_tables(zz_img)
     entropy_coded_data = huffman_encode(zz_img, *tables)
+    with open("face.jpg", "wb") as file:
+        write_grayscale_jpeg(file, img.shape[0], img.shape[1], q_luma, tables[0], tables[1], entropy_coded_data)
 
 if __name__ == "__main__":
     main()
