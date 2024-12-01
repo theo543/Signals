@@ -100,7 +100,7 @@ def quantize(img, Q):
     np.round(img, out=img)
     return img.astype(np.int16)
 
-ZIGZAG_IDX = np.array([
+INVERSE_ZIGZAG_IDX = np.array([
     0,  1,  5,  6, 14, 15, 27, 28,
     2,  4,  7, 13, 16, 26, 29, 42,
     3,  8, 12, 17, 25, 30, 41, 43,
@@ -110,6 +110,8 @@ ZIGZAG_IDX = np.array([
     21, 34, 37, 47, 50, 56, 59, 61,
     35, 36, 48, 49, 57, 58, 62, 63
 ])
+
+ZIGZAG_IDX = np.argsort(INVERSE_ZIGZAG_IDX)
 
 def zigzag(img: np.ndarray):
     if len(img.shape) == 4:
