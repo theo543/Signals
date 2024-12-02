@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Self, BinaryIO
+from typing import Any, Self, BinaryIO, cast
 from itertools import combinations, product
 from heapq import heapify, heappop, heappush
 from sys import byteorder
@@ -347,10 +347,10 @@ def build_huffman_tables(zz_img: np.ndarray, zz_img_2: np.ndarray | None = None)
 
 @numba.experimental.jitclass
 class ByteBuffer:
-    _next_byte: numba.uint64
-    _bytebuffer: numba.uint8[:]
-    _bitbuffer: numba.uint64
-    _bitcapacity: numba.uint8
+    _next_byte: numba.uint64    # type: ignore
+    _bytebuffer: numba.uint8[:] # type: ignore
+    _bitbuffer: numba.uint64    # type: ignore
+    _bitcapacity: numba.uint8   # type: ignore
 
     def __init__(self):
         self._next_byte = 0
@@ -462,6 +462,7 @@ def lossy_compress(blocks: np.ndarray, q: np.ndarray):
 
 def lossy_uncompress(blocks: np.ndarray, q: np.ndarray) -> np.ndarray:
     result = idctn(blocks * q, s=(8, 8), axes=(2, 3), norm="ortho")
+    result = cast(np.ndarray, result) # weird type hint bug with scipy's idctn
     return np.round(result, out=result)
 
 def lossy_compress_color(img: np.ndarray, q_luma: np.ndarray, q_chroma: np.ndarray):
