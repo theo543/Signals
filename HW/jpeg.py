@@ -1,7 +1,8 @@
 from dataclasses import dataclass
-from typing import Self, BinaryIO
+from typing import Any, Self, BinaryIO
 from itertools import combinations
 from heapq import heapify, heappop, heappush
+from sys import byteorder
 import numpy as np
 import numba
 from scipy.datasets import face
@@ -500,6 +501,13 @@ def snr(orig, noisy):
 def title(orig, noisy):
     return f"MSE = {mse(orig, noisy):.2f}\nSNR = {snr(orig, noisy):.2f}"
 
+def to_file(file: BinaryIO, data: np.ndarray, expected_dtype:Any=np.uint8):
+    assert data.flags.c_contiguous
+    assert data.strides == (data.itemsize,)
+    assert data.shape == (data.size,)
+    assert data.dtype == expected_dtype
+    file.write(memoryview(data))
+
 def write_huffman_table(file: BinaryIO, table: tuple[np.ndarray, np.ndarray], is_ac: bool, table_id: int):
     huffman_lengths, huffman_values = table
     assert huffman_lengths.shape == (17,)
@@ -513,16 +521,18 @@ def write_huffman_table(file: BinaryIO, table: tuple[np.ndarray, np.ndarray], is
         int(2 + 1 + 16 + huffman_lengths.sum()).to_bytes(2, 'big') +
         int((is_ac << 4) + table_id).to_bytes(1)
     )
-    huffman_lengths[1:].tofile(file, sep="")
-    huffman_values.tofile(file, sep="")
+    to_file(file, huffman_lengths[1:])
+    to_file(file, huffman_values)
 
 def write_quantization_matrix(file: BinaryIO, q: np.ndarray, matrix_id: int):
     assert q.shape == (8, 8)
     assert q.itemsize == 2
 
     extended = 1
+    expected_dtype = np.uint16
     if q.max() < 256:
         extended = 0
+        expected_dtype = np.uint8
         q = q.astype(np.uint8)
 
     file.write(
@@ -530,8 +540,16 @@ def write_quantization_matrix(file: BinaryIO, q: np.ndarray, matrix_id: int):
         int(2 + 1 + 64 * q.itemsize).to_bytes(2, 'big') +
         ((extended << 4) + matrix_id).to_bytes(1)
     )
-    file.flush()
-    q.reshape(64).tofile(file, sep="")
+
+    assert byteorder in ['little', 'big']
+    if extended and (byteorder == 'little'):
+        # Extended precision matrix needs endianness swap.
+        q = q.byteswap()
+
+    # !! Matrix is stored to DQT segment in zigzag order !!
+    q = q.reshape(64)[ZIGZAG_IDX]
+
+    to_file(file, q, expected_dtype)
 
 @dataclass
 class SOFComponentParameters:
@@ -596,22 +614,23 @@ def write_grayscale_jpeg(file: BinaryIO, height: int, width: int, q_luma: np.nda
     write_huffman_table(file, luma_dc_table, False, 0)
     write_huffman_table(file, luma_ac_table, True, 0)
     write_start_of_scan(file, [SOSComponentParameters(1, 0, 0)])
-    entropy_coded_data.tofile(file, sep="")
+    to_file(file, entropy_coded_data)
     file.write(b"\xFF\xD9") # EOI
 
 def main():
     test_blocks_reversible()
     test_huffman_table()
 
-    img = face(gray=True)
-    q_luma = Q_quality(Q_LUMA, 100)
-    img_comp = lossy_compress_grayscale(img, q_luma)
-    dc_delta_encode(img_comp)
-    zz_img = zigzag(img_comp)
-    tables = build_huffman_tables(zz_img)
-    entropy_coded_data = huffman_encode(zz_img, *tables)
-    with open("face.jpg", "wb") as file:
-        write_grayscale_jpeg(file, img.shape[0], img.shape[1], q_luma, tables[0], tables[1], entropy_coded_data)
+    for quality in [5, 20, 50, 70, 95, 100]:
+        img = face(gray=True)
+        q_luma = Q_quality(Q_LUMA, quality)
+        img_comp = lossy_compress_grayscale(img, q_luma)
+        dc_delta_encode(img_comp)
+        zz_img = zigzag(img_comp)
+        tables = build_huffman_tables(zz_img)
+        entropy_coded_data = huffman_encode(zz_img, *tables)
+        with open(f"quality={quality}.jpg", "wb") as file:
+            write_grayscale_jpeg(file, img.shape[0], img.shape[1], q_luma, tables[0], tables[1], entropy_coded_data)
 
 if __name__ == "__main__":
     main()
