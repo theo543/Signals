@@ -1,0 +1,6 @@
+Quality   5: MSE = 196.91, SNR =     80.61, Size =     15 KiB
+Quality  20: MSE =  36.47, SNR =    435.21, Size =     50 KiB
+Quality  50: MSE =  13.46, SNR =   1178.93, Size =     81 KiB
+Quality  70: MSE =   4.01, SNR =   3954.04, Size =    125 KiB
+Quality  95: MSE =   0.26, SNR =  61705.33, Size =    195 KiB
+Quality 100: MSE =   0.07, SNR = 219243.90, Size =    292 KiB

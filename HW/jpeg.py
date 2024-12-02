@@ -3,10 +3,12 @@ from typing import Any, Self, BinaryIO
 from itertools import combinations
 from heapq import heapify, heappop, heappush
 from sys import byteorder
+from pathlib import Path
 import numpy as np
 import numba
 from scipy.datasets import face
 from scipy.fft import dctn, idctn
+from imageio.v3 import imread
 
 RGB_TO_YCBCR = np.array(
     [[0.299, 0.587, 0.114], [-0.169, -0.331, 0.500], [0.500, -0.419, -0.081]]
@@ -621,16 +623,27 @@ def main():
     test_blocks_reversible()
     test_huffman_table()
 
+    img = face(gray=True)
+    report = []
     for quality in [5, 20, 50, 70, 95, 100]:
-        img = face(gray=True)
-        q_luma = Q_quality(Q_LUMA, quality)
-        img_comp = lossy_compress_grayscale(img, q_luma)
-        dc_delta_encode(img_comp)
-        zz_img = zigzag(img_comp)
-        tables = build_huffman_tables(zz_img)
-        entropy_coded_data = huffman_encode(zz_img, *tables)
-        with open(f"quality={quality}.jpg", "wb") as file:
-            write_grayscale_jpeg(file, img.shape[0], img.shape[1], q_luma, tables[0], tables[1], entropy_coded_data)
+        compress_with_quality(img, report, quality)
+    Path("report.txt").write_text("\n".join(report) + "\n", encoding="ascii")
+
+def compress_with_quality(img: np.ndarray, report: list[str], quality: int):
+    q_luma = Q_quality(Q_LUMA, quality)
+    img_comp = lossy_compress_grayscale(img, q_luma)
+    dc_delta_encode(img_comp)
+    zz_img = zigzag(img_comp)
+    tables = build_huffman_tables(zz_img)
+    entropy_coded_data = huffman_encode(zz_img, *tables)
+    destination = Path(f"quality={quality}.jpg")
+    with open(destination, "wb") as file:
+        write_grayscale_jpeg(file, img.shape[0], img.shape[1], q_luma, tables[0], tables[1], entropy_coded_data)
+    size = destination.stat().st_size
+    img_roundtripped = imread(destination)
+    jpg_mse = mse(img, img_roundtripped)
+    jpg_snr = snr(img, img_roundtripped)
+    report.append(f"Quality {quality: >3}: MSE = {jpg_mse: >6.2f}, SNR = {jpg_snr: >9.2f}, Size = {size // 1024: >6} KiB")
 
 if __name__ == "__main__":
     main()
