@@ -473,7 +473,7 @@ def lossy_compress_color(img: np.ndarray, q_luma: np.ndarray, q_chroma: np.ndarr
     ycbcr[:, :, :, :, 2] = lossy_compress(ycbcr[:, :, :, :, 2], q_chroma)
     return ycbcr
 
-def lossy_uncompress_color(ycbcr: np.ndarray, q_luma: np.ndarray, q_chroma: np.ndarray, original_shape):
+def lossy_uncompress_color(ycbcr: np.ndarray, q_luma: np.ndarray, q_chroma: np.ndarray, height: int, width: int):
     ycbcr[:, :, :, :, 0] = lossy_uncompress(ycbcr[:, :, :, :, 0], q_luma)
     ycbcr[:, :, :, :, 0] += 128
     ycbcr[:, :, :, :, 1] = lossy_uncompress(ycbcr[:, :, :, :, 1], q_chroma)
@@ -481,7 +481,7 @@ def lossy_uncompress_color(ycbcr: np.ndarray, q_luma: np.ndarray, q_chroma: np.n
     img = (ycbcr @ YCBCR_TO_RGB).round()
     img = np.round(img, out=img)
     img = np.clip(img, 0, 255, out=img)
-    return from_blocks(img.astype(np.uint8), *original_shape)
+    return from_blocks(img.astype(np.uint8), height, width)
 
 def lossy_compress_grayscale(img: np.ndarray, q: np.ndarray):
     img = to_blocks(img.astype(np.int16))
@@ -659,6 +659,32 @@ def compress_with_quality_color(destination: Path, img: np.ndarray, quality: int
     with open(destination, "wb") as file:
         write_color_jpeg(file, img.shape[0], img.shape[1], q_luma, q_chroma, *luma_tables, *chroma_tables, entropy_coded_data)
 
+def lossy_roundtrip_mse_grayscale(img, quality):
+    q_luma = Q_quality(Q_LUMA, quality)
+    img_comp = lossy_compress_grayscale(img, q_luma)
+    img_roundtripped = lossy_uncompress_grayscale(img_comp, q_luma, img.shape)
+    return mse(img, img_roundtripped)
+
+def lossy_roundtrip_mse_color(img, quality):
+    q_luma = Q_quality(Q_LUMA, quality)
+    q_chroma = Q_quality(Q_CHROMA, quality)
+    img_comp = lossy_compress_color(img, q_luma, q_chroma)
+    img_roundtripped = lossy_uncompress_color(img_comp, q_luma, q_chroma, img.shape[0], img.shape[1])
+    return mse(img, img_roundtripped)
+
+def search_with_mse(img: np.ndarray, max_mse: float, roundtrip_fn) -> int:
+    time = perf_counter()
+    l, r = 0, 100
+    while l < r:
+        m = (l + r) // 2
+        m_mse = roundtrip_fn(img, m)
+        if m_mse <= max_mse:
+            r = m
+        else:
+            l = m + 1
+    print(f"MSE search {roundtrip_fn.__name__} took {perf_counter() - time:.2f} s")
+    return l
+
 def main():
     test_blocks_reversible()
     test_huffman_table()
@@ -666,7 +692,12 @@ def main():
     img_grayscale = face(gray=True)
     img_color = face(gray=False)
     report = []
-    for quality, (img, kind) in product([5, 20, 50, 70, 95, 100], [(img_grayscale, "gray"), (img_color, "color")]):
+    settings = list(product([5, 20, 50, 70, 95, 100], [(img_grayscale, "gray"), (img_color, "color")]))
+    max_mse = 15
+    settings.append((search_with_mse(img_grayscale, max_mse, lossy_roundtrip_mse_grayscale), (img_grayscale, "gray")))
+    settings.append((search_with_mse(img_color, max_mse, lossy_roundtrip_mse_color), (img_color, "color")))
+
+    for quality, (img, kind) in settings:
         start = perf_counter()
         destination = Path(f"quality={quality}_{kind}.jpg")
         if kind == "color":

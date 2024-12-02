@@ -10,3 +10,5 @@ Quality  95  gray: MSE =   0.26, SNR =  61705.33, Size =    195 KiB
 Quality  95 color: MSE =   1.64, SNR =   9431.41, Size =    262 KiB
 Quality 100  gray: MSE =   0.07, SNR = 219243.90, Size =    292 KiB
 Quality 100 color: MSE =   1.36, SNR =  11395.12, Size =    543 KiB
+Quality  42  gray: MSE =  14.83, SNR =   1069.99, Size =     76 KiB
+Quality  60 color: MSE =  14.82, SNR =   1042.09, Size =    124 KiB
