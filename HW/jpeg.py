@@ -1,9 +1,10 @@
 from dataclasses import dataclass
 from typing import Any, Self, BinaryIO
-from itertools import combinations
+from itertools import combinations, product
 from heapq import heapify, heappop, heappush
 from sys import byteorder
 from pathlib import Path
+from time import perf_counter
 import numpy as np
 import numba
 from scipy.datasets import face
@@ -11,8 +12,8 @@ from scipy.fft import dctn, idctn
 from imageio.v3 import imread
 
 RGB_TO_YCBCR = np.array(
-    [[0.299, 0.587, 0.114], [-0.169, -0.331, 0.500], [0.500, -0.419, -0.081]]
-)
+    [[0.299, 0.587, 0.114], [-0.168736, -0.331264, 0.5], [0.5, -0.418688, -0.081312]]
+).T
 
 YCBCR_TO_RGB = np.linalg.inv(RGB_TO_YCBCR)
 
@@ -31,14 +32,14 @@ Q_LUMA = np.array(
 
 Q_CHROMA = np.array(
     [
-        [9, 9, 12, 24, 50, 50, 50, 50],
-        [9, 11, 13, 33, 50, 50, 50, 50],
-        [12, 13, 28, 50, 50, 50, 50, 50],
-        [24, 33, 50, 50, 50, 50, 50, 50],
-        [50, 50, 50, 50, 50, 50, 50, 50],
-        [50, 50, 50, 50, 50, 50, 50, 50],
-        [50, 50, 50, 50, 50, 50, 50, 50],
-        [50, 50, 50, 50, 50, 50, 50, 50],
+        [17, 18, 24, 47, 99, 99, 99, 99],
+        [18, 21, 26, 66, 99, 99, 99, 99],
+        [24, 26, 56, 99, 99, 99, 99, 99],
+        [47, 66, 99, 99, 99, 99, 99, 99],
+        [99, 99, 99, 99, 99, 99, 99, 99],
+        [99, 99, 99, 99, 99, 99, 99, 99],
+        [99, 99, 99, 99, 99, 99, 99, 99],
+        [99, 99, 99, 99, 99, 99, 99, 99]
     ]
 )
 
@@ -97,11 +98,6 @@ def Q_quality(Q, quality):
     Q[Q == 0] = 1
     return Q
 
-def quantize(img, Q):
-    img /= Q
-    np.round(img, out=img)
-    return img.astype(np.int16)
-
 INVERSE_ZIGZAG_IDX = np.array([
     0,  1,  5,  6, 14, 15, 27, 28,
     2,  4,  7, 13, 16, 26, 29, 42,
@@ -116,9 +112,7 @@ INVERSE_ZIGZAG_IDX = np.array([
 ZIGZAG_IDX = np.argsort(INVERSE_ZIGZAG_IDX)
 
 def zigzag(img: np.ndarray):
-    if len(img.shape) == 4:
-        return img.reshape(img.shape[0], img.shape[1], -1)[:, :, ZIGZAG_IDX].copy()
-    return img.reshape(img.shape[0], img.shape[1], -1, 3)[:, :, ZIGZAG_IDX, :].copy()
+    return img.reshape(-1, 64)[:, ZIGZAG_IDX].copy()
 
 @numba.jit(cache=True)
 def dc_delta_encode(img: np.ndarray):
@@ -130,13 +124,14 @@ def dc_delta_encode(img: np.ndarray):
         prev = dc
 
 @numba.jit(cache=True)
-def dc_delta_decode(img: np.ndarray):
-    blocks = img.reshape(-1, 64)
-    prev = blocks[0, 0]
+def dc_delta_encode_color(img: np.ndarray):
+    blocks = img.reshape(-1, 64, 3)
+    prevs = [blocks[0, 0, 0], blocks[0, 0, 1], blocks[0, 0, 2]]
     for block in blocks[1:]:
-        dc = block[0]
-        block[0] = dc + prev
-        prev = block[0]
+        for i in range(3):
+            dc = block[0, i]
+            block[0, i] = dc - prevs[i]
+            prevs[i] = dc
 
 @numba.jit(cache=True)
 def encoding_size(value: np.ndarray):
@@ -155,13 +150,12 @@ EOB = 0x00
 
 @numba.jit(cache=True)
 def count_codewords(zz_img: np.ndarray, dc_count: np.ndarray, ac_count: np.ndarray):
-    assert len(zz_img.shape) == 3
+    assert len(zz_img.shape) == 2
     assert zz_img.shape[-1] == 64
     assert dc_count.shape == (12,)
     assert ac_count.shape == (256,)
 
-    blocks = zz_img.reshape(-1, 64)
-    sizes = encoding_size(blocks)
+    sizes = encoding_size(zz_img)
 
     dc_count += np.bincount(sizes[:, 0], minlength=12)
 
@@ -179,7 +173,9 @@ def count_codewords(zz_img: np.ndarray, dc_count: np.ndarray, ac_count: np.ndarr
             ac_count[(zeros << 4) | size] += 1
             zeros = 0
 
-def build_huffman_table(symbol_count: np.ndarray, subtree_integrity_debug_checks=False) -> tuple[np.ndarray, np.ndarray]:
+Table = tuple[np.ndarray, np.ndarray]
+
+def build_huffman_table(symbol_count: np.ndarray, subtree_integrity_debug_checks=False) -> Table:
     # All-ones code is forbidden in JPEG.
     # A dummy node with count 0 is used to ensure no real node is assigned all-ones.
     # Any real node must take at least one left edge in the Huffman tree.
@@ -256,7 +252,7 @@ def build_huffman_table(symbol_count: np.ndarray, subtree_integrity_debug_checks
 
     return huffman_count, huffman_values
 
-def adjust_huffman_counts(huffman_count: np.ndarray, huffman_values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def adjust_huffman_counts(huffman_count: np.ndarray, huffman_values: np.ndarray) -> Table:
 
     assert huffman_count.shape == (33,)
     assert huffman_count.sum() == huffman_values.size
@@ -338,18 +334,14 @@ def test_huffman_table(N=20):
         test *= random.integers(0, 2, 256)
         test_build_table(test)
 
-def build_huffman_tables(zz_img: np.ndarray):
-    # JPEG has separate tables for Y component and for Cb+Cr components.
-    assert len(zz_img.shape) == 3 or zz_img.shape[3] == 2
+def build_huffman_tables(zz_img: np.ndarray, zz_img_2: np.ndarray | None = None):
 
     dc_count = np.zeros(12, dtype=np.int64)
     ac_count = np.zeros(256, dtype=np.int64)
 
-    if len(zz_img.shape) == 3:
-        count_codewords(zz_img, dc_count, ac_count)
-    else:
-        count_codewords(zz_img[:, :, :, 0], dc_count, ac_count)
-        count_codewords(zz_img[:, :, :, 1], dc_count, ac_count)
+    count_codewords(zz_img, dc_count, ac_count)
+    if zz_img_2 is not None:
+        count_codewords(zz_img_2, dc_count, ac_count)
 
     return build_adjusted_huffman_table(dc_count), build_adjusted_huffman_table(ac_count)
 
@@ -406,12 +398,7 @@ class ByteBuffer:
         self._bitcapacity -= length
 
 @numba.jit(cache=True)
-def huffman_encode(zz_img: np.ndarray, dc_table: tuple[np.ndarray, np.ndarray], ac_table: tuple[np.ndarray, np.ndarray]) -> np.ndarray:
-    bytebuffer = ByteBuffer()
-
-    expanded_dc_table = expand_huffman_table(*dc_table)
-    expanded_ac_table = expand_huffman_table(*ac_table)
-
+def huffman_encode_block(bytebuffer: ByteBuffer, block: np.ndarray, expanded_dc_table: np.ndarray, expanded_ac_table: np.ndarray):
     def add_dc_codeword(value):
         length, codeword = expanded_dc_table[value]
         bytebuffer.add_bits(length, codeword)
@@ -420,41 +407,57 @@ def huffman_encode(zz_img: np.ndarray, dc_table: tuple[np.ndarray, np.ndarray], 
         length, codeword = expanded_ac_table[value]
         bytebuffer.add_bits(length, codeword)
 
-    flat_zz_img = zz_img.reshape(-1, 64)
-
-    for block in flat_zz_img:
-        eob = block[-1] == 0
-        block = np.trim_zeros(block, trim='b')
-        if block.size == 0:
-            add_dc_codeword(0)
-            add_ac_codeword(EOB)
-            continue
-        sizes = encoding_size(block)
-        encodings = block + (2 ** sizes - 1) * (block < 0)
-        add_dc_codeword(sizes[0])
-        bytebuffer.add_bits(sizes[0], encodings[0])
-        zeros = 0
-        for i in range(1, block.size):
-            if sizes[i] == 0:
-                zeros += 1
-                if zeros == 16:
-                    add_ac_codeword(ZRL)
-                    zeros = 0
-            else:
-                assert zeros < 16
-                assert sizes[i] < 16
-                add_ac_codeword((zeros << 4) | sizes[i])
-                bytebuffer.add_bits(sizes[i], encodings[i])
+    eob = block[-1] == 0
+    block = np.trim_zeros(block, trim='b')
+    if block.size == 0:
+        add_dc_codeword(0)
+        add_ac_codeword(EOB)
+        return
+    sizes = encoding_size(block)
+    encodings = block + (2 ** sizes - 1) * (block < 0)
+    add_dc_codeword(sizes[0])
+    bytebuffer.add_bits(sizes[0], encodings[0])
+    zeros = 0
+    for i in range(1, block.size):
+        if sizes[i] == 0:
+            zeros += 1
+            if zeros == 16:
+                add_ac_codeword(ZRL)
                 zeros = 0
-        if eob:
-            add_ac_codeword(EOB)
+        else:
+            assert zeros < 16
+            assert sizes[i] < 16
+            add_ac_codeword((zeros << 4) | sizes[i])
+            bytebuffer.add_bits(sizes[i], encodings[i])
+            zeros = 0
+    if eob:
+        add_ac_codeword(EOB)
 
+@numba.jit(cache=True)
+def huffman_encode(zz_img: np.ndarray, dc_table: Table, ac_table: Table) -> np.ndarray:
+    expanded_dc_table = expand_huffman_table(*dc_table)
+    expanded_ac_table = expand_huffman_table(*ac_table)
+    bytebuffer = ByteBuffer()
+    for block in zz_img:
+        huffman_encode_block(bytebuffer, block, expanded_dc_table, expanded_ac_table)
+    return bytebuffer.final_flush()
+
+@numba.jit(cache=True)
+def huffman_encode_color(zz_y: np.ndarray, zz_cb: np.ndarray, zz_cr: np.ndarray, luma_dc: Table, luma_ac: Table, chroma_dc: Table, chroma_ac: Table) -> np.ndarray:
+    expanded_luma_dc = expand_huffman_table(*luma_dc)
+    expanded_luma_ac = expand_huffman_table(*luma_ac)
+    expanded_chroma_dc = expand_huffman_table(*chroma_dc)
+    expanded_chroma_ac = expand_huffman_table(*chroma_ac)
+    bytebuffer = ByteBuffer()
+    for i in range(zz_y.shape[0]):
+        huffman_encode_block(bytebuffer, zz_y[i], expanded_luma_dc, expanded_luma_ac)
+        huffman_encode_block(bytebuffer, zz_cb[i], expanded_chroma_dc, expanded_chroma_ac)
+        huffman_encode_block(bytebuffer, zz_cr[i], expanded_chroma_dc, expanded_chroma_ac)
     return bytebuffer.final_flush()
 
 def lossy_compress(blocks: np.ndarray, q: np.ndarray):
     dct = dctn(blocks, s=(8, 8), axes=(2, 3), norm="ortho")
     dct /= q
-    assert -(2 ** 15) <= dct.min() <= dct.max() <= 2 ** 15
     return np.round(dct, out=dct)
 
 def lossy_uncompress(blocks: np.ndarray, q: np.ndarray) -> np.ndarray:
@@ -463,7 +466,7 @@ def lossy_uncompress(blocks: np.ndarray, q: np.ndarray) -> np.ndarray:
 
 def lossy_compress_color(img: np.ndarray, q_luma: np.ndarray, q_chroma: np.ndarray):
     img = to_blocks(img)
-    ycbcr = (img @ RGB_TO_YCBCR).round().astype(np.int16)
+    ycbcr = np.trunc(img @ RGB_TO_YCBCR).astype(np.int16)
     ycbcr[:, :, :, :, 0] -= 128
     ycbcr[:, :, :, :, 0] = lossy_compress(ycbcr[:, :, :, :, 0], q_luma)
     ycbcr[:, :, :, :, 1] = lossy_compress(ycbcr[:, :, :, :, 1], q_chroma)
@@ -510,8 +513,7 @@ def to_file(file: BinaryIO, data: np.ndarray, expected_dtype:Any=np.uint8):
     assert data.dtype == expected_dtype
     file.write(memoryview(data))
 
-def write_huffman_table(file: BinaryIO, table: tuple[np.ndarray, np.ndarray], is_ac: bool, table_id: int):
-    huffman_lengths, huffman_values = table
+def write_huffman_table(file: BinaryIO, huffman_lengths: np.ndarray, huffman_values: np.ndarray, is_ac: bool, table_id: int):
     assert huffman_lengths.shape == (17,)
     assert huffman_lengths[0] == 0
     assert huffman_values.shape == (huffman_lengths.sum(),)
@@ -608,42 +610,80 @@ def write_app0(file: BinaryIO):
         b"\0"
     )
 
-def write_grayscale_jpeg(file: BinaryIO, height: int, width: int, q_luma: np.ndarray, luma_dc_table: tuple[np.ndarray, np.ndarray], luma_ac_table: tuple[np.ndarray, np.ndarray], entropy_coded_data: np.ndarray):
+def write_grayscale_jpeg(file: BinaryIO, height: int, width: int, q_luma: np.ndarray, luma_dc: Table, luma_ac: Table, entropy_coded_data: np.ndarray):
     file.write(b"\xFF\xD8") # SOI
     write_app0(file)
     write_quantization_matrix(file, q_luma, 0)
     write_start_of_frame(file, height, width, 8, [SOFComponentParameters(1, 1, 1, 0)])
-    write_huffman_table(file, luma_dc_table, False, 0)
-    write_huffman_table(file, luma_ac_table, True, 0)
+    write_huffman_table(file, *luma_dc, False, 0)
+    write_huffman_table(file, *luma_ac, True, 0)
     write_start_of_scan(file, [SOSComponentParameters(1, 0, 0)])
     to_file(file, entropy_coded_data)
     file.write(b"\xFF\xD9") # EOI
 
-def main():
-    test_blocks_reversible()
-    test_huffman_table()
+def write_color_jpeg(file: BinaryIO, height: int, width: int, q_luma: np.ndarray, q_chroma: np.ndarray, luma_dc: Table, luma_ac: Table, chroma_dc: Table, chroma_ac: Table, entropy_coded_data: np.ndarray):
+    file.write(b"\xFF\xD8") # SOI
+    write_app0(file)
+    write_quantization_matrix(file, q_luma, 0)
+    write_quantization_matrix(file, q_chroma, 1)
+    write_start_of_frame(file, height, width, 8, [SOFComponentParameters(1, 1, 1, 0), SOFComponentParameters(2, 1, 1, 1), SOFComponentParameters(3, 1, 1, 1)])
+    write_huffman_table(file, *luma_dc, False, 0)
+    write_huffman_table(file, *luma_ac, True, 0)
+    write_huffman_table(file, *chroma_dc, False, 1)
+    write_huffman_table(file, *chroma_ac, True, 1)
+    write_start_of_scan(file, [SOSComponentParameters(1, 0, 0), SOSComponentParameters(2, 1, 1), SOSComponentParameters(3, 1, 1)])
+    to_file(file, entropy_coded_data)
+    file.write(b"\xFF\xD9") # EOI
 
-    img = face(gray=True)
-    report = []
-    for quality in [5, 20, 50, 70, 95, 100]:
-        compress_with_quality(img, report, quality)
-    Path("report.txt").write_text("\n".join(report) + "\n", encoding="ascii")
-
-def compress_with_quality(img: np.ndarray, report: list[str], quality: int):
+def compress_with_quality(destination: Path, img: np.ndarray, quality: int):
     q_luma = Q_quality(Q_LUMA, quality)
     img_comp = lossy_compress_grayscale(img, q_luma)
     dc_delta_encode(img_comp)
     zz_img = zigzag(img_comp)
     tables = build_huffman_tables(zz_img)
     entropy_coded_data = huffman_encode(zz_img, *tables)
-    destination = Path(f"quality={quality}.jpg")
     with open(destination, "wb") as file:
-        write_grayscale_jpeg(file, img.shape[0], img.shape[1], q_luma, tables[0], tables[1], entropy_coded_data)
-    size = destination.stat().st_size
-    img_roundtripped = imread(destination)
-    jpg_mse = mse(img, img_roundtripped)
-    jpg_snr = snr(img, img_roundtripped)
-    report.append(f"Quality {quality: >3}: MSE = {jpg_mse: >6.2f}, SNR = {jpg_snr: >9.2f}, Size = {size // 1024: >6} KiB")
+        write_grayscale_jpeg(file, img.shape[0], img.shape[1], q_luma, *tables, entropy_coded_data)
+
+def compress_with_quality_color(destination: Path, img: np.ndarray, quality: int):
+    q_luma = Q_quality(Q_LUMA, quality)
+    q_chroma = Q_quality(Q_CHROMA, quality)
+    img_comp = lossy_compress_color(img, q_luma, q_chroma)
+    dc_delta_encode_color(img_comp)
+    zz_y = zigzag(img_comp[:, :, :, :, 0])
+    zz_cb = zigzag(img_comp[:, :, :, :, 1])
+    zz_cr = zigzag(img_comp[:, :, :, :, 2])
+    luma_tables = build_huffman_tables(zz_y)
+    chroma_tables = build_huffman_tables(zz_cb, zz_cr)
+    entropy_coded_data = huffman_encode_color(zz_y, zz_cb, zz_cr, *luma_tables, *chroma_tables)
+    with open(destination, "wb") as file:
+        write_color_jpeg(file, img.shape[0], img.shape[1], q_luma, q_chroma, *luma_tables, *chroma_tables, entropy_coded_data)
+
+def main():
+    test_blocks_reversible()
+    test_huffman_table()
+
+    img_grayscale = face(gray=True)
+    img_color = face(gray=False)
+    report = []
+    for quality, (img, kind) in product([5, 20, 50, 70, 95, 100], [(img_grayscale, "gray"), (img_color, "color")]):
+        start = perf_counter()
+        destination = Path(f"quality={quality}_{kind}.jpg")
+        if kind == "color":
+            compress_with_quality_color(destination, img, quality)
+        else:
+            compress_with_quality(destination, img, quality)
+        end = perf_counter()
+
+        print(f"Quality {quality: >3} {kind: >5}: {end - start:.2f} s")
+
+        size = destination.stat().st_size
+        img_roundtripped = imread(destination)
+        jpg_mse = mse(img, img_roundtripped)
+        jpg_snr = snr(img, img_roundtripped)
+        report.append(f"Quality {quality: >3} {kind: >5}: MSE = {jpg_mse: >6.2f}, SNR = {jpg_snr: >9.2f}, Size = {size // 1024: >6} KiB")
+
+    Path("report.txt").write_text("\n".join(report) + "\n", encoding="ascii")
 
 if __name__ == "__main__":
     main()

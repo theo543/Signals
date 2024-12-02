@@ -1,6 +1,12 @@
-Quality   5: MSE = 196.91, SNR =     80.61, Size =     15 KiB
-Quality  20: MSE =  36.47, SNR =    435.21, Size =     50 KiB
-Quality  50: MSE =  13.46, SNR =   1178.93, Size =     81 KiB
-Quality  70: MSE =   4.01, SNR =   3954.04, Size =    125 KiB
-Quality  95: MSE =   0.26, SNR =  61705.33, Size =    195 KiB
-Quality 100: MSE =   0.07, SNR = 219243.90, Size =    292 KiB
+Quality   5  gray: MSE = 196.91, SNR =     80.61, Size =     15 KiB
+Quality   5 color: MSE = 268.68, SNR =     57.48, Size =     22 KiB
+Quality  20  gray: MSE =  36.47, SNR =    435.21, Size =     50 KiB
+Quality  20 color: MSE =  45.84, SNR =    336.86, Size =     60 KiB
+Quality  50  gray: MSE =  13.46, SNR =   1178.93, Size =     81 KiB
+Quality  50 color: MSE =  16.96, SNR =    910.39, Size =     97 KiB
+Quality  70  gray: MSE =   4.01, SNR =   3954.04, Size =    125 KiB
+Quality  70 color: MSE =   6.04, SNR =   2558.86, Size =    147 KiB
+Quality  95  gray: MSE =   0.26, SNR =  61705.33, Size =    195 KiB
+Quality  95 color: MSE =   1.64, SNR =   9431.41, Size =    262 KiB
+Quality 100  gray: MSE =   0.07, SNR = 219243.90, Size =    292 KiB
+Quality 100 color: MSE =   1.36, SNR =  11395.12, Size =    543 KiB
