@@ -5,10 +5,12 @@ from heapq import heapify, heappop, heappush
 from sys import byteorder
 from pathlib import Path
 from time import perf_counter
+from contextlib import contextmanager
 import numpy as np
 import numba
 from scipy.datasets import face
 from scipy.fft import dctn, idctn
+from skvideo.io import FFmpegReader
 from imageio.v3 import imread
 
 RGB_TO_YCBCR = np.array(
@@ -465,8 +467,7 @@ def lossy_uncompress(blocks: np.ndarray, q: np.ndarray) -> np.ndarray:
     result = cast(np.ndarray, result) # weird type hint bug with scipy's idctn
     return np.round(result, out=result)
 
-def lossy_compress_color(img: np.ndarray, q_luma: np.ndarray, q_chroma: np.ndarray):
-    img = to_blocks(img)
+def lossy_compress_color_blocks(img: np.ndarray, q_luma: np.ndarray, q_chroma: np.ndarray):
     ycbcr = np.trunc(img @ RGB_TO_YCBCR).astype(np.int16)
     ycbcr[:, :, :, :, 0] -= 128
     ycbcr[:, :, :, :, 0] = lossy_compress(ycbcr[:, :, :, :, 0], q_luma)
@@ -474,7 +475,10 @@ def lossy_compress_color(img: np.ndarray, q_luma: np.ndarray, q_chroma: np.ndarr
     ycbcr[:, :, :, :, 2] = lossy_compress(ycbcr[:, :, :, :, 2], q_chroma)
     return ycbcr
 
-def lossy_uncompress_color(ycbcr: np.ndarray, q_luma: np.ndarray, q_chroma: np.ndarray, height: int, width: int):
+def lossy_compress_color(img: np.ndarray, q_luma: np.ndarray, q_chroma: np.ndarray):
+    return lossy_compress_color_blocks(to_blocks(img), q_luma, q_chroma)
+
+def lossy_uncompress_color_blocks(ycbcr: np.ndarray, q_luma: np.ndarray, q_chroma: np.ndarray):
     ycbcr[:, :, :, :, 0] = lossy_uncompress(ycbcr[:, :, :, :, 0], q_luma)
     ycbcr[:, :, :, :, 0] += 128
     ycbcr[:, :, :, :, 1] = lossy_uncompress(ycbcr[:, :, :, :, 1], q_chroma)
@@ -482,7 +486,10 @@ def lossy_uncompress_color(ycbcr: np.ndarray, q_luma: np.ndarray, q_chroma: np.n
     img = (ycbcr @ YCBCR_TO_RGB).round()
     img = np.round(img, out=img)
     img = np.clip(img, 0, 255, out=img)
-    return from_blocks(img.astype(np.uint8), height, width)
+    return img.astype(np.uint8)
+
+def lossy_uncompress_color(img: np.ndarray, q_luma: np.ndarray, q_chroma: np.ndarray, height: int, width: int):
+    return from_blocks(lossy_uncompress_color_blocks(img, q_luma, q_chroma), height, width)
 
 def lossy_compress_grayscale(img: np.ndarray, q: np.ndarray):
     img = to_blocks(img.astype(np.int16))
@@ -636,17 +643,16 @@ def write_color_jpeg(file: BinaryIO, height: int, width: int, q_luma: np.ndarray
     to_file(file, entropy_coded_data)
     file.write(b"\xFF\xD9") # EOI
 
-def compress_with_quality(destination: Path, img: np.ndarray, quality: int):
+def compress_with_quality(destination: BinaryIO, img: np.ndarray, quality: int):
     q_luma = Q_quality(Q_LUMA, quality)
     img_comp = lossy_compress_grayscale(img, q_luma)
     dc_delta_encode(img_comp)
     zz_img = zigzag(img_comp)
     tables = build_huffman_tables(zz_img)
     entropy_coded_data = huffman_encode(zz_img, *tables)
-    with open(destination, "wb") as file:
-        write_grayscale_jpeg(file, img.shape[0], img.shape[1], q_luma, *tables, entropy_coded_data)
+    write_grayscale_jpeg(destination, img.shape[0], img.shape[1], q_luma, *tables, entropy_coded_data)
 
-def compress_with_quality_color(destination: Path, img: np.ndarray, quality: int):
+def compress_with_quality_color(destination: BinaryIO, img: np.ndarray, quality: int):
     q_luma = Q_quality(Q_LUMA, quality)
     q_chroma = Q_quality(Q_CHROMA, quality)
     img_comp = lossy_compress_color(img, q_luma, q_chroma)
@@ -657,8 +663,7 @@ def compress_with_quality_color(destination: Path, img: np.ndarray, quality: int
     luma_tables = build_huffman_tables(zz_y)
     chroma_tables = build_huffman_tables(zz_cb, zz_cr)
     entropy_coded_data = huffman_encode_color(zz_y, zz_cb, zz_cr, *luma_tables, *chroma_tables)
-    with open(destination, "wb") as file:
-        write_color_jpeg(file, img.shape[0], img.shape[1], q_luma, q_chroma, *luma_tables, *chroma_tables, entropy_coded_data)
+    write_color_jpeg(destination, img.shape[0], img.shape[1], q_luma, q_chroma, *luma_tables, *chroma_tables, entropy_coded_data)
 
 def lossy_roundtrip_mse_grayscale(img, quality):
     q_luma = Q_quality(Q_LUMA, quality)
@@ -673,8 +678,15 @@ def lossy_roundtrip_mse_color(img, quality):
     img_roundtripped = lossy_uncompress_color(img_comp, q_luma, q_chroma, img.shape[0], img.shape[1])
     return mse(img, img_roundtripped)
 
+def lossy_roundtrip_mse_color_blocks(blocks, quality):
+    q_luma = Q_quality(Q_LUMA, quality)
+    q_chroma = Q_quality(Q_CHROMA, quality)
+    blocks = blocks[np.newaxis, ...]
+    img_comp = lossy_compress_color_blocks(blocks, q_luma, q_chroma)
+    img_roundtripped = lossy_uncompress_color_blocks(img_comp, q_luma, q_chroma)
+    return mse(blocks, img_roundtripped)
+
 def search_with_mse(img: np.ndarray, max_mse: float, roundtrip_fn) -> int:
-    time = perf_counter()
     l, r = 0, 100
     while l < r:
         m = (l + r) // 2
@@ -683,28 +695,180 @@ def search_with_mse(img: np.ndarray, max_mse: float, roundtrip_fn) -> int:
             r = m
         else:
             l = m + 1
-    print(f"MSE search {roundtrip_fn.__name__} took {perf_counter() - time:.2f} s")
     return l
+
+def search_with_mse_timed(img: np.ndarray, max_mse: float, roundtrip_fn) -> int:
+    start = perf_counter()
+    quality = search_with_mse(img, max_mse, roundtrip_fn)
+    print(f"MSE search {roundtrip_fn.__name__} took {perf_counter() - start:.2f} s")
+    return quality
+
+def pick_random_blocks(img: np.ndarray, block_count: int, random: np.random.Generator):
+    blocks = np.empty((block_count, 8, 8, 3), dtype=np.uint8)
+    x_coords = random.integers(0, (img.shape[1] - 7) // 8, block_count)
+    y_coords = random.integers(0, (img.shape[0] - 7) // 8, block_count)
+    for i, (x, y) in enumerate(zip(x_coords, y_coords)):
+        blocks[i] = img[y * 8:y * 8 + 8, x * 8:x * 8 + 8]
+    return blocks
+
+AVIF_HASINDEX = 0x10
+AVIIF_KEYFRAME = 0x10
+def compress_video_with_mse(source: Path, destination: BinaryIO, max_mse: float):
+    # FFmpegReader uses outdated numpy types
+    np.float = np.float64 # type: ignore
+    np.int = np.int_      # type: ignore
+    reader = FFmpegReader(source)
+
+    def w(data: bytes):
+        destination.write(data)
+    def w16(data):
+        assert 0 <= data < 2**16
+        w(int(data).to_bytes(2, 'little'))
+    def w32(data):
+        assert 0 <= data < 2**32
+        w(int(data).to_bytes(4, 'little'))
+    def placeholder():
+        placeholder_offset = destination.tell()
+        w32(0)
+        return placeholder_offset
+    def fill_placeholder(placeholder_offset: int, data: int):
+        old_offset = destination.tell()
+        destination.seek(placeholder_offset)
+        w32(data)
+        destination.seek(old_offset)
+    @contextmanager
+    def chunk(marker: str, expected_size: int | None = None):
+        assert len(marker) == 4
+        w(marker.encode('ascii'))
+        size_offset = placeholder()
+        yield
+        chunk_size = destination.tell() - size_offset - 4
+        assert (expected_size is None) or (chunk_size == expected_size)
+        fill_placeholder(size_offset, chunk_size)
+        if chunk_size % 2 == 1:
+            w(b"\0")
+    @contextmanager
+    def list_chunk(marker: str):
+        with chunk("LIST"):
+            w(marker.encode('ascii'))
+            yield
+
+    w(b"RIFF")
+    riff_size = placeholder()
+    max_byterate_offset = None
+    buf_size_1 = None
+    buf_size_2 = None
+    w(b"AVI ")
+    with list_chunk("hdrl"):
+        with chunk("avih", 56):
+            w32(int(1_000_000 / reader.inputfps)) # microseconds per frame
+            max_byterate_offset = placeholder()
+            w32(0) # reserved
+            w32(AVIF_HASINDEX)
+            w32(reader.inputframenum) # total frames
+            w32(0) # initial frame
+            w32(1) # number of streams
+            buf_size_1 = placeholder()
+            w32(reader.inputwidth)
+            w32(reader.inputheight)
+            w(b"\0" * 16) # reserved
+        with list_chunk("strl"):
+            with chunk("strh", 56):
+                w(b"vids")
+                w(b"MJPG")
+                w32(0) # flags
+                w32(0) # priority
+                w32(0) # initial frame
+                second, frames = reader.probeInfo["video"]["@r_frame_rate"].split("/")
+                w32(int(frames))
+                w32(int(second))
+                w32(0) # start time
+                w32(reader.inputframenum) # length
+                buf_size_2 = placeholder()
+                w(b"\xFF\xFF\xFF\xFF") # quality (not used)
+                w32(0) # variable sample size
+                w16(0) # left coordinate
+                w16(0) # top coordinate
+                w16(reader.inputwidth) # right coordinate
+                w16(reader.inputheight) # bottom coordinate
+            with chunk("strf", 40):
+                w32(40) # duplicate size field for some reason
+                w32(reader.inputwidth)
+                w32(reader.inputheight)
+                w16(1) # planes must be 1
+                w16(24) # bits per pixel
+                w(b"MJPG")
+                w32(reader.inputwidth * reader.inputheight * 3) # image size in bytes
+                w32(0) # no horizontal DPI
+                w32(0) # no vertical DPI
+                w32(0) # all colors used
+                w32(0) # all colors important
+
+    offsets = np.empty(reader.inputframenum, dtype=np.int32)
+    sizes = np.empty(reader.inputframenum, dtype=np.int32)
+    random = np.random.default_rng(seed=0)
+    with list_chunk("movi"):
+        for i, frame in enumerate(reader.nextFrame()):
+            offsets[i] = destination.tell()
+            w(b"00dc")
+            frame_size_offset = placeholder()
+            block_samples = pick_random_blocks(frame, 64, random)
+            quality = search_with_mse(block_samples, max_mse, lossy_roundtrip_mse_color_blocks)
+            compress_with_quality_color(destination, frame, quality)
+            print(f"Frame {i + 1}/{reader.inputframenum} compressed with quality {quality}")
+            frame_size = destination.tell() - frame_size_offset - 4
+            fill_placeholder(frame_size_offset, frame_size)
+            sizes[i] = frame_size
+            if destination.tell() % 2 == 1:
+                w(b"\0")
+
+    with chunk("idx1"):
+        for i in range(reader.inputframenum):
+            w(b"00dc")
+            w32(AVIIF_KEYFRAME)
+            w32(offsets[i])
+            w32(sizes[i])
+
+    fps = int(np.ceil(reader.inputfps))
+    sliding_window = np.lib.stride_tricks.sliding_window_view(sizes, fps)
+    max_byterate = sliding_window.sum(axis=1).max() + 8
+    max_buffer = sizes.max() + 8
+    fill_placeholder(max_byterate_offset, max_byterate)
+    fill_placeholder(buf_size_1, max_buffer)
+    fill_placeholder(buf_size_2, max_buffer)
+    fill_placeholder(riff_size, destination.tell() - 8)
 
 def main():
     test_blocks_reversible()
     test_huffman_table()
+
+    video_source = Path("Green Bird Perched on Tree Branch.mp4")
+    video_output = video_source.with_suffix(".avi")
+    if not video_output.exists():
+        with open(video_output, "wb") as file:
+            compress_video_with_mse(video_source, file, 15)
+        src_reader = FFmpegReader(video_source)
+        out_reader = FFmpegReader(video_output)
+        assert src_reader.inputframenum == out_reader.inputframenum
+        frame_mse = np.empty(src_reader.inputframenum, dtype=np.float64)
+        for i, (src_frame, out_frame) in enumerate(zip(src_reader.nextFrame(), out_reader.nextFrame())):
+            frame_mse[i] = mse(src_frame, out_frame)
+        print(f"Video MSE: {frame_mse.mean():.2f}")
 
     img_grayscale = face(gray=True)
     img_color = face(gray=False)
     report = []
     settings = list(product([5, 20, 50, 70, 95, 100], [(img_grayscale, "gray"), (img_color, "color")]))
     max_mse = 15
-    settings.append((search_with_mse(img_grayscale, max_mse, lossy_roundtrip_mse_grayscale), (img_grayscale, "gray")))
-    settings.append((search_with_mse(img_color, max_mse, lossy_roundtrip_mse_color), (img_color, "color")))
+    settings.append((search_with_mse_timed(img_grayscale, max_mse, lossy_roundtrip_mse_grayscale), (img_grayscale, "gray")))
+    settings.append((search_with_mse_timed(img_color, max_mse, lossy_roundtrip_mse_color), (img_color, "color")))
 
     for quality, (img, kind) in settings:
         start = perf_counter()
+        compress = compress_with_quality_color if kind == "color" else compress_with_quality
         destination = Path(f"quality={quality}_{kind}.jpg")
-        if kind == "color":
-            compress_with_quality_color(destination, img, quality)
-        else:
-            compress_with_quality(destination, img, quality)
+        with open(destination, "wb") as dest:
+            compress(dest, img, quality)
         end = perf_counter()
 
         print(f"Quality {quality: >3} {kind: >5}: {end - start:.2f} s")
