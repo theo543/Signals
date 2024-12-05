@@ -2,23 +2,8 @@ import numpy as np
 from matplotlib.axes import Axes
 from matplotlib import pyplot as plt
 from savefig import savefig
-
-def train_ar_model(series: np.ndarray, p: int, m: int):
-    matrix = np.empty((m, p))
-    for i in range(p):
-        matrix[:, i] = series[p - i: p - i + m][::-1]
-    model, _, _, _ = np.linalg.lstsq(matrix, series[-m:], rcond=None)
-    assert model.shape == (p,)
-    return model
-
-def predict(series: np.ndarray, model: np.ndarray):
-    predictions = np.zeros_like(series)[model.size:]
-    for i in range(model.size, series.size):
-        predictions[i - model.size] = model.T @ series[i - model.size : i][::-1]
-    return predictions
-
-def mse(series: np.ndarray, prediction: np.ndarray, p: int):
-    return np.square(series[p:] - prediction).mean()
+from ar_model import mse, train_ar_model, ar_predict
+from random_time_series import random_time_series
 
 def normalize(autocorr: np.ndarray):
     autocorr /= np.max(np.abs(autocorr))
@@ -35,15 +20,7 @@ def autocorrelation_numpy(series: np.ndarray):
 
 def main():
     N = 1000
-    time = np.arange(N)
-    a = np.random.random() / 10000
-    b = np.random.random() / 100
-    def rand_freq(time) -> np.ndarray:
-        return np.sin(2 * np.pi * time * (np.random.random() / 30)) * (time / 400)
-    trend = a * np.square(time) + b * time
-    season = rand_freq(time) + rand_freq(time)
-    noise = np.random.normal(0, 0.5, N)
-    series = trend + season + noise
+    series, trend, season, noise = random_time_series(N)
     axs : list[Axes]
     fig, axs = plt.subplots(nrows=4, ncols=1)
     for ax, array, title in zip(axs, [series, trend, season, noise], ["Series", "Trend", "Season", "Noise"]):
@@ -65,12 +42,12 @@ def main():
     p = 5
     m = 700
     model = train_ar_model(series, p=p, m=m)
-    prediction = predict(series, model)
+    prediction = ar_predict(series, model)
     plt.plot(series)
     plt.plot(prediction)
     plt.legend(["Series", "Prediction"])
     plt.xlabel("Time")
-    plt.title(f"MSE = {mse(series, prediction, p):.3f}")
+    plt.title(f"MSE = {mse(series[p:], prediction):.3f}")
     savefig("Lab 8 prediction")
     plt.close()
 
@@ -91,7 +68,7 @@ def main():
         p = int(np.clip(best_p + random.normal(0, p_step), 2, p_max))
         m = int(np.clip(best_m + random.normal(0, m_step), 1, train.size - p))
         model = train_ar_model(train, p=p, m=m)
-        new_mse = mse(train, predict(train, model), p)
+        new_mse = mse(train[p:], ar_predict(train, model))
         if best_mse > new_mse:
             best_p = p
             best_m = m
@@ -102,8 +79,8 @@ def main():
         print(f"p = {best_p:3d}, m = {best_m:3d}, MSE = {best_mse:.3f}, will stop if no change for {convergence_threshold - no_change:5d} more iterations", end="\r")
     print()
 
-    full_prediction = predict(series, train_ar_model(train, p=best_p, m=best_m))
-    full_mse = mse(series, full_prediction, best_p)
+    full_prediction = ar_predict(series, train_ar_model(train, p=best_p, m=best_m))
+    full_mse = mse(series[best_p:], full_prediction)
     plt.plot(np.arange(series.size), series)
     plt.plot(np.arange(best_p, series.size), full_prediction)
     plt.axvline(train_size, color="red", linestyle="--")
