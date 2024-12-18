@@ -114,6 +114,8 @@ INVERSE_ZIGZAG_IDX = np.array([
 ZIGZAG_IDX = np.argsort(INVERSE_ZIGZAG_IDX)
 
 def zigzag(img: np.ndarray):
+    assert len(img.shape) == 4
+    assert img.shape[2] == 8 and img.shape[3] == 8
     return img.reshape(-1, 64)[:, ZIGZAG_IDX].copy()
 
 @numba.jit(cache=True)
