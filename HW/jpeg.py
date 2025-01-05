@@ -6,6 +6,7 @@ from sys import byteorder
 from pathlib import Path
 from time import perf_counter
 from contextlib import contextmanager
+from argparse import ArgumentParser
 import numpy as np
 import numba
 from scipy.datasets import face
@@ -689,7 +690,7 @@ def lossy_roundtrip_mse_color_blocks(blocks, quality):
     return mse(blocks, img_roundtripped)
 
 def search_with_mse(img: np.ndarray, max_mse: float, roundtrip_fn) -> int:
-    l, r = 0, 100
+    l, r = 1, 100
     while l < r:
         m = (l + r) // 2
         m_mse = roundtrip_fn(img, m)
@@ -715,7 +716,7 @@ def pick_random_blocks(img: np.ndarray, block_count: int, random: np.random.Gene
 
 AVIF_HASINDEX = 0x10
 AVIIF_KEYFRAME = 0x10
-def compress_video_with_mse(source: Path, destination: BinaryIO, max_mse: float):
+def compress_video_with_mse(source: Path, destination: BinaryIO, max_mse: float | None, quality: int | None):
     # FFmpegReader uses outdated numpy types
     np.float = np.float64 # type: ignore
     np.int = np.int_      # type: ignore
@@ -814,10 +815,13 @@ def compress_video_with_mse(source: Path, destination: BinaryIO, max_mse: float)
             offsets[i] = destination.tell()
             w(b"00dc")
             frame_size_offset = placeholder()
-            block_samples = pick_random_blocks(frame, 64, random)
-            quality = search_with_mse(block_samples, max_mse, lossy_roundtrip_mse_color_blocks)
-            compress_with_quality_color(destination, frame, quality)
-            print(f"Frame {i + 1}/{reader.inputframenum} compressed with quality {quality}")
+            frame_quality = quality
+            if frame_quality is None:
+                assert max_mse is not None
+                block_samples = pick_random_blocks(frame, 64, random)
+                frame_quality = search_with_mse(block_samples, max_mse, lossy_roundtrip_mse_color_blocks)
+            compress_with_quality_color(destination, frame, frame_quality)
+            print(f"Frame {i + 1}/{reader.inputframenum} compressed with quality {frame_quality}")
             frame_size = destination.tell() - frame_size_offset - 4
             fill_placeholder(frame_size_offset, frame_size)
             sizes[i] = frame_size
@@ -840,22 +844,43 @@ def compress_video_with_mse(source: Path, destination: BinaryIO, max_mse: float)
     fill_placeholder(buf_size_2, max_buffer)
     fill_placeholder(riff_size, destination.tell() - 8)
 
-def main():
+def encode_image(img: np.ndarray, output: Path, quality: int, overwrite: bool):
+    if len(img.shape) == 2:
+        kind = "gray"
+        compress = compress_with_quality
+    else:
+        assert len(img.shape) == 3
+        assert img.shape[2] == 3
+        kind = "color"
+        compress = compress_with_quality_color
+
+    start = perf_counter()
+    with open(output, "wb" if overwrite else "xb") as dest:
+        compress(dest, img, quality)
+    end = perf_counter()
+
+    print(f"Quality {quality: >3} {kind: >5}: {end - start:.2f} s")
+
+def encode_video(video: Path, output: Path, overwrite: bool, max_mse: float | None, quality: int | None):
+    assert (max_mse is None) ^ (quality is None)
+    with open(output, "wb" if overwrite else "xb") as dest:
+        compress_video_with_mse(video, dest, max_mse, quality)
+    src_reader = FFmpegReader(video)
+    out_reader = FFmpegReader(output)
+    assert src_reader.inputframenum == out_reader.inputframenum
+    frame_mse = np.empty(src_reader.inputframenum, dtype=np.float64)
+    for i, (src_frame, out_frame) in enumerate(zip(src_reader.nextFrame(), out_reader.nextFrame())):
+        frame_mse[i] = mse(src_frame, out_frame)
+    print(f"Video MSE: {frame_mse.mean():.2f}")
+
+def examples():
     test_blocks_reversible()
     test_huffman_table()
 
     video_source = Path("Green Bird Perched on Tree Branch.mp4")
     video_output = video_source.with_suffix(".avi")
     if not video_output.exists():
-        with open(video_output, "wb") as file:
-            compress_video_with_mse(video_source, file, 15)
-        src_reader = FFmpegReader(video_source)
-        out_reader = FFmpegReader(video_output)
-        assert src_reader.inputframenum == out_reader.inputframenum
-        frame_mse = np.empty(src_reader.inputframenum, dtype=np.float64)
-        for i, (src_frame, out_frame) in enumerate(zip(src_reader.nextFrame(), out_reader.nextFrame())):
-            frame_mse[i] = mse(src_frame, out_frame)
-        print(f"Video MSE: {frame_mse.mean():.2f}")
+        encode_video(video_source, video_output, overwrite=True, max_mse=15, quality=None)
 
     img_grayscale = face(gray=True)
     img_color = face(gray=False)
@@ -866,14 +891,8 @@ def main():
     settings.append((search_with_mse_timed(img_color, max_mse, lossy_roundtrip_mse_color), (img_color, "color")))
 
     for quality, (img, kind) in settings:
-        start = perf_counter()
-        compress = compress_with_quality_color if kind == "color" else compress_with_quality
         destination = Path(f"quality={quality}_{kind}.jpg")
-        with open(destination, "wb") as dest:
-            compress(dest, img, quality)
-        end = perf_counter()
-
-        print(f"Quality {quality: >3} {kind: >5}: {end - start:.2f} s")
+        encode_image(img, destination, quality, overwrite=True)
 
         size = destination.stat().st_size
         img_roundtripped = imread(destination)
@@ -882,6 +901,37 @@ def main():
         report.append(f"Quality {quality: >3} {kind: >5}: MSE = {jpg_mse: >6.2f}, SNR = {jpg_snr: >9.2f}, Size = {size // 1024: >6} KiB")
 
     Path("report.txt").write_text("\n".join(report) + "\n", encoding="ascii")
+
+def main():
+    ap = ArgumentParser()
+    ap.add_argument("COMMAND", choices=["image", "video", "examples"], default="examples", nargs="?")
+    ap.add_argument("SOURCE", type=Path, nargs="?")
+    ap.add_argument("-o", type=Path)
+    ap.add_argument("--quality", type=int)
+    ap.add_argument("--mse", type=float)
+    ap.add_argument("--overwrite", action="store_true")
+    args = ap.parse_args()
+
+    if args.COMMAND == "examples":
+        examples()
+        return
+
+    source = args.SOURCE
+    assert source is not None
+    output = args.o
+    if output is None:
+        output = source.with_suffix(".jpg" if args.COMMAND == "image" else ".avi")
+
+    if args.COMMAND == "image":
+        img = imread(source)
+        quality = args.quality
+        if quality is None:
+            assert args.mse is not None
+            roundtrip = lossy_roundtrip_mse_grayscale if len(img.shape) == 2 else lossy_roundtrip_mse_color
+            quality = search_with_mse_timed(img, args.mse, roundtrip)
+        encode_image(img, output, quality, args.overwrite)
+    elif args.COMMAND == "video":
+        encode_video(source, output, args.overwrite, args.mse, args.quality)
 
 if __name__ == "__main__":
     main()
