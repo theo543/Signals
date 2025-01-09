@@ -1,5 +1,8 @@
 import numpy as np
 
+from l1regls import l1regls
+from cvxopt import matrix as cvxopt_matrix
+
 from replace_me import insert_comment
 
 from random_time_series import random_time_series
@@ -39,6 +42,14 @@ def greedy_train_sparse_ar_model(series: np.ndarray, p: int, m: int, sparse_p: i
         zero_indices.append(best_i)
     return train_sparse_ar_model(series, p, m, zero_indices)
 
+def l1_reg_train_ar_model(series: np.ndarray, p: int, m: int) -> np.ndarray:
+    matrix = np.empty((m, p))
+    for i in range(p):
+        matrix[:, i] = series[p - i : p - i + m][::-1]
+    model = np.array(l1regls(cvxopt_matrix(matrix), cvxopt_matrix(series[-m:]))).ravel()
+    assert model.shape == (p,)
+    return model
+
 def poly_roots(poly: np.ndarray) -> np.ndarray:
     companion = np.zeros((poly.size, poly.size))
     companion[0, -1] = -poly[0]
@@ -57,9 +68,13 @@ def main():
 
     spare_model = greedy_train_sparse_ar_model(series, p, m, sparse_p)
     sparse_mse = mse(series[p:], ar_predict(series, spare_model))
-
     insert_comment(f"{sparse_mse:.3f}")
     # 5.987
+
+    l1_model = l1_reg_train_ar_model(series, sparse_p, m)
+    l1_mse = mse(series[sparse_p:], ar_predict(series,  l1_model))
+    insert_comment(f"{l1_mse:.3f}")
+    # 2.269
 
     insert_comment(np.around(np.abs(poly_roots(spare_model)), decimals=3))
     # array([0.999, 0.999, 1.005, 1.005, 1.009, 1.009, 1.009, 1.009, 1.006,
@@ -68,6 +83,10 @@ def main():
     #        0.999, 1.001, 1.001, 0.998, 0.998, 0.986, 0.986, 0.962, 0.962,
     #        0.957, 0.957, 0.991, 0.991, 0.984, 0.984, 0.968, 0.968, 0.96 ,
     #        0.96 , 0.972, 0.972, 0.973, 0.973])
+
+    insert_comment(np.around(np.abs(poly_roots(l1_model)), decimals=3))
+    # array([0.966, 0.966, 0.937, 0.937, 1.001, 1.001, 1.055, 1.055, 1.009,
+    #        1.009])
 
 if __name__ == "__main__":
     main()
