@@ -1,6 +1,7 @@
 from typing import Callable
 
 import numpy as np
+import scipy
 from matplotlib import pyplot as plt
 
 from savefig import savefig
@@ -43,7 +44,7 @@ def periodic(x, y, a = 1, b = 2):
 def symmetric(x, y, a = 100):
     return np.exp(- a * np.minimum(np.abs(x - y), np.abs(x + y)) ** 2)
 
-def main():
+def gaussian_figures():
     gaussian_1d = gaussian(np.array([5]), np.array([[10]]))
     plt.plot([gaussian_1d() for _ in range(1_000)])
     savefig("Lab 12 1D Gaussian")
@@ -62,6 +63,32 @@ def main():
     gaussian_process(ornstein_uhlenbeck, samples=1)
     gaussian_process(periodic, samples=2)
     gaussian_process(symmetric, samples=1)
+
+def main():
+    gaussian_figures()
+
+    data = scipy.io.arff.loadarff("mauna-loa-atmospheric-co2-2.arff")[0]
+    year = []
+    monthly = []
+    acc = data[0][6]
+    acc_count = 1
+    for prev_record, record in zip(data[:-1], data[1:]):
+        if prev_record[0] == record[0] and prev_record[1] == record[1]:
+            acc += record[6]
+            acc_count += 1
+        else:
+            year.append(prev_record[0] + prev_record[1] / 12)
+            monthly.append(acc / acc_count)
+            acc = record[6]
+            acc_count = 1
+    year.append(data[-1][0] + data[-1][1] / 12)
+    monthly.append(acc / acc_count)
+
+    plt.plot(year, monthly, color="black")
+    plt.xlabel("Year")
+    plt.ylabel("Montly CO2 Average (ppm)")
+    savefig("Lab 12 CO2 Monthly")
+    plt.close()
 
 if __name__ == "__main__":
     main()
