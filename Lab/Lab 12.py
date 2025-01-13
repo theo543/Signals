@@ -15,15 +15,18 @@ def gaussian(mean: np.ndarray, covariance: np.ndarray) -> Callable[[], np.ndarra
         return tmp @ np.random.normal(size=mean.size) + mean
     return sample_gaussian_distribution
 
-def gaussian_process(cov_fn: Callable[[np.ndarray, np.ndarray], np.ndarray], samples: int, points: int = 300, min_: float = -1, max_: float = 1):
+def matrices_of(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    return np.broadcast_to(x[:, np.newaxis], (x.size, y.size)), np.broadcast_to(y[np.newaxis, :], (x.size, y.size))
+
+def gaussian_process(kernel: Callable[[np.ndarray, np.ndarray], np.ndarray], samples: int, points: int = 300, min_: float = -1, max_: float = 1):
     sample_points = np.linspace(min_, max_, points)
-    covariance = cov_fn(np.broadcast_to(sample_points[np.newaxis, :], (points, points)), np.broadcast_to(sample_points[:, np.newaxis], (points, points)))
+    covariance = kernel(*matrices_of(sample_points, sample_points))
     distribution = gaussian(np.zeros(points), covariance)
     for _ in range(samples):
         x = distribution()
         assert np.max(np.abs(x.imag)) < 1e-6
         plt.plot(sample_points, x.real, marker="o", markersize=1, linewidth=0.5)
-    savefig(f"Lab 12 Gaussian Process - {cov_fn.__name__}")
+    savefig(f"Lab 12 Gaussian Process - {kernel.__name__}")
     plt.close()
 
 def linear(x, y, a=10):
@@ -32,16 +35,16 @@ def linear(x, y, a=10):
 def brownian(x, y):
     return np.minimum(x, y)
 
-def exponential_squared(x, y, a=1000):
-    return np.exp(- a * np.abs(x - y) ** 2)
+def exponential_squared(x, y, a=1000.0, l=1.0):
+    return np.exp(- a * np.abs(x - y) ** 2 / l ** 2)
 
-def ornstein_uhlenbeck(x, y, a=2):
+def ornstein_uhlenbeck(x, y, a=2.0):
     return np.exp(- a * np.abs(x - y))
 
-def periodic(x, y, a = 1, b = 2):
+def periodic(x, y, a = 1.0, b = 2.0):
     return np.exp(- a * np.sin(b * np.pi * np.abs(x - y)) ** 2)
 
-def symmetric(x, y, a = 100):
+def symmetric(x, y, a = 100.0):
     return np.exp(- a * np.minimum(np.abs(x - y), np.abs(x + y)) ** 2)
 
 def gaussian_figures():
@@ -84,10 +87,47 @@ def main():
     year.append(data[-1][0] + data[-1][1] / 12)
     monthly.append(acc / acc_count)
 
+    year = np.array(year)
+    monthly = np.array(monthly)
+
+    def labels():
+        plt.xlabel("Year")
+        plt.ylabel("Montly CO2 Average (ppm)")
+
     plt.plot(year, monthly, color="black")
-    plt.xlabel("Year")
-    plt.ylabel("Montly CO2 Average (ppm)")
+    labels()
     savefig("Lab 12 CO2 Monthly")
+    plt.close()
+
+    linear_trend_poly = np.polyfit(year, monthly, 1)
+    ob_linear_trend = np.polyval(linear_trend_poly, year)
+    monthly -= ob_linear_trend
+
+    # use only last 12 months for model training
+    MONTHS = 12
+
+    observation_indices = year[-MONTHS:]
+    observed_data = monthly[-MONTHS:]
+
+    def kernel(x, y):
+        return 0.3 * exponential_squared(x, y, 0.3, 2) + periodic(x, y, 50, 1)
+
+    prediction_indices = np.concatenate([year, np.arange(2002, 2025, 1/12)])
+    c_aa = kernel(*matrices_of(prediction_indices, prediction_indices))
+    c_ab = kernel(*matrices_of(prediction_indices, observation_indices))
+    c_ba = kernel(*matrices_of(observation_indices, prediction_indices))
+    c_bb = kernel(*matrices_of(observation_indices, observation_indices))
+    c_bb_inv = np.linalg.inv(c_bb)
+    mean = c_ab @ c_bb_inv @ observed_data
+    cov = c_aa - c_ab @ c_bb_inv @ c_ba
+    model = gaussian(mean, cov)
+
+    plt.plot(year, monthly + ob_linear_trend, "--", color="black", zorder=10)
+    pd_linear_trend = np.polyval(linear_trend_poly, prediction_indices)
+    for _ in range(10):
+        plt.plot(prediction_indices, model().real + pd_linear_trend, color="blue", alpha=0.1)
+    labels()
+    savefig("Lab 12 CO2 Model")
     plt.close()
 
 if __name__ == "__main__":
